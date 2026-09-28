@@ -10,9 +10,13 @@ static game::Function<void*(void* toon, void* npc)> find_record{ "mmoToon::FindQ
 namespace player {
 
 std::vector<void*> records(void* toon) {
-    const game::Objects& all = game::field<game::Objects>(toon, "mmoToon::questGiverProgress");
+    const game::Objects& all = records_in_place(toon);
 
     return std::vector<void*>(all.begin(), all.end());
+}
+
+const game::Objects& records_in_place(void* toon) {
+    return game::field<game::Objects>(toon, "mmoToon::questGiverProgress");
 }
 
 void* record_for(void* toon, void* npc) {

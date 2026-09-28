@@ -18,10 +18,20 @@ LineStats of(const Questline& line) {
 
     if (!stats.quests.empty()) {
         stats.started = stats.quests.front().accepted;
-        stats.finished = stats.quests.back().completed;
+    }
+
+    // Each end's finishers: a line whose branches never meet again has several.
+    for (void* end : line.ends) {
+        stats.finished += quest::times_completed(end);
     }
 
     return stats;
+}
+
+int players_starting(const Questline& line, std::size_t chapter) {
+    std::size_t first = line.chapters[chapter].first_quest;
+
+    return first < line.quests.size() ? quest::times_accepted(line.quests[first]) : 0;
 }
 
 std::optional<int> finish_rate(int taken, int turned_in) {

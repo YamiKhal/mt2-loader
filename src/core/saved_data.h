@@ -21,6 +21,10 @@ bool saved_data_set(const void* object, const char* key, const char* value, char
 bool saved_data_get(const void* object, const char* key, char* value, size_t value_size, size_t* length);
 // The keys that start with prefix, without it, one per line. Returns the size needed, with the final '\0'.
 size_t saved_data_keys(const void* object, const char* prefix, char* keys, size_t keys_size);
+// A link to another game object, kept as the object itself: saved as the id the save gives it, and gone when it's
+// destroyed. A NULL target removes the key. get_link is NULL for no link (or a text value).
+bool saved_data_set_link(const void* object, const char* key, const void* target, char* problem, size_t problem_size);
+const void* saved_data_get_link(const void* object, const char* key);
 // The object at the root of every saved game (the game state), or NULL outside a game.
 void* saved_data_root(void);
 

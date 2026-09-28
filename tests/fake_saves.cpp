@@ -4,6 +4,7 @@
 // field it doesn't know. Text files (a saved game's rules.vrt) are records with a child per field (vsRTTI::Save),
 // read back one child at a time (vsRTTI::Load). Every function the loader looks for keeps its call, as in the game.
 #include <cstdio>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -101,16 +102,31 @@ __attribute__((noipa)) bool vsSaveObjectContext::ContainsObject(const vsNullObje
 
 static volatile int objects_loaded = 0;
 
+// Objects saved with a linkId are found by it once the load has them all, as links to them resolve.
 class vsObjectContext {
 public:
     ~vsObjectContext();
 
+    void AddObject(int id, vsNullObject* object);
+    vsNullObject* GetObjectId(int id);
+
     int objects = 0;
+    std::map<int, vsNullObject*> by_id;
 };
 
 __attribute__((noipa)) vsObjectContext::~vsObjectContext() {
     objects_loaded = objects_loaded + objects;
     objects = -1;
+}
+
+__attribute__((noipa)) void vsObjectContext::AddObject(int id, vsNullObject* object) {
+    by_id[id] = object;
+}
+
+__attribute__((noipa)) vsNullObject* vsObjectContext::GetObjectId(int id) {
+    auto found = by_id.find(id);
+
+    return found != by_id.end() ? found->second : nullptr;
 }
 
 
@@ -342,7 +358,12 @@ __attribute__((noipa)) void vsObject<T, Base>::LoadFromStream(vsRecordReader* re
 
     for (int index = 0; index < count; index++) {
         reader->Next();
-        T::s_RTTI.LoadStream(this, reader, context);
+
+        if (reader->Get()->label.text == "linkId") {
+            context->AddObject(std::stoi(reader->Get()->GetToken(0).AsString()), this);
+        } else {
+            T::s_RTTI.LoadStream(this, reader, context);
+        }
     }
 
     reader->EndChildren();
@@ -607,6 +628,12 @@ extern "C" void fake_saves_results(FILE* file) {
         npc->PostResolve();
         std::fprintf(file, "loaded_npc%zu=%d %s\n", index, npc->kind, npc->marker.c_str());
     }
+
+    // The quest giver the saved game links to goes away, and the link with it.
+    delete state->npcs[0];
+    state->npcs.erase(state->npcs.begin());
+    state->npcs[0]->PostResolve();
+    std::fprintf(file, "after_link_target_deleted=%s\n", state->npcs[0]->marker.c_str());
 
     delete state;
     vsSingleton<mmoGameState>::s_instance = nullptr;

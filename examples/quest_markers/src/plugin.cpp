@@ -552,6 +552,19 @@ static void handle_command(void* window, const game::Record& command) {
 }
 
 static void add_the_tab() {
+    // A quest giver destroyed while its window is open, and the last game's windows.
+    game::in("_ZN6mmoNPCD1Ev").before([](void* npc) {
+        for (auto& [window, shown] : npc_in_window) {
+            if (shown == npc) {
+                shown = nullptr;
+            }
+        }
+    });
+
+    game::in("mmoModeInGame::DoInit").before([](void*) {
+        npc_in_window.clear();
+    });
+
     game::in("mmoNPCInfoWindow::SetNPC").after([](void* window, void* npc) {
         npc_in_window[window] = npc;
         refresh_tab(window);

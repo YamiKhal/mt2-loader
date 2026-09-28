@@ -48,10 +48,12 @@
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <ranges>
 #include <set>
+#include <shared_mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -2853,6 +2855,14 @@ void check_field_type(std::string_view name, const PropertyType& type) {
     }
 }
 
+// Guards what the plugin looks up once and keeps (field offsets, singletons, taught enum words): hooks run on the
+// game's worker threads too (a player's planning, loading and saving a game).
+inline std::shared_mutex& lookups_lock() {
+    static std::shared_mutex lock;
+
+    return lock;
+}
+
 // Offsets found so far, per type read (so each name and type is checked once).
 template<class T>
 std::map<std::string, std::size_t, std::less<>>& field_offsets() {
@@ -2864,16 +2874,21 @@ std::map<std::string, std::size_t, std::less<>>& field_offsets() {
 template<class T>
 std::size_t field_offset(std::string_view name) {
     auto& offsets = field_offsets<T>();
-    auto found = offsets.find(name);
 
-    if (found != offsets.end()) {
-        return found->second;
+    {
+        std::shared_lock reading(lookups_lock());
+        auto found = offsets.find(name);
+
+        if (found != offsets.end()) {
+            return found->second;
+        }
     }
 
     game::Address property = find_property(name);
     check_field_type<T>(name, property_type(property, name));
 
     auto offset = (property + static_cast<std::ptrdiff_t>(property_offset_at)).read<std::size_t>();
+    std::unique_lock writing(lookups_lock());
     offsets.emplace(std::string(name), offset);
 
     return offset;
@@ -2931,19 +2946,26 @@ inline void* object_in(void* object, std::string_view name) {
 //     void* subscribers = game::singleton("mmoSubscriberManager");
 inline void* singleton(std::string_view class_name) {
     static std::map<std::string, Address, std::less<>> instances;
-    auto found = instances.find(class_name);
 
-    if (found == instances.end()) {
-        Address instance = try_find(std::format("vsSingleton<{}>::s_instance", class_name));
+    {
+        std::shared_lock reading(plugin::detail::lookups_lock());
+        auto found = instances.find(class_name);
 
-        if (!instance) {
-            plugin::fail("The game keeps no single {} (there's no vsSingleton<{}>::s_instance)", class_name, class_name);
+        if (found != instances.end()) {
+            return found->second.read<void*>();
         }
-
-        found = instances.emplace(std::string(class_name), instance).first;
     }
 
-    return found->second.read<void*>();
+    Address instance = try_find(std::format("vsSingleton<{}>::s_instance", class_name));
+
+    if (!instance) {
+        plugin::fail("The game keeps no single {} (there's no vsSingleton<{}>::s_instance)", class_name, class_name);
+    }
+
+    std::unique_lock writing(plugin::detail::lookups_lock());
+    instances.emplace(std::string(class_name), instance);
+
+    return instance.read<void*>();
 }
 
 // A new game object, made the way the game makes one it loads from its files:
@@ -3033,7 +3055,7 @@ public:
     }
 
     bool has(std::string_view key) const {
-        return read(key).has_value();
+        return read(key).has_value() || link(key) != nullptr;
     }
 
     template<class T>
@@ -3052,6 +3074,36 @@ public:
 
     void erase(std::string_view key) {
         write(key, nullptr);
+    }
+
+    /*
+        A link to another game object (a building, an NPC, a quest), kept in saved games as the game keeps its own
+        links, and nullptr once that object is destroyed. link() gives the object as a whole (a building, not the
+        quest target inside it). Needs loader 0.12.0.
+
+            game::saved(quest).set_link("target.2", building);
+            void* building = game::saved(quest).link("target.2");
+    */
+    void set_link(std::string_view key, const void* other) {
+        const plugin::raw::PluginApi& api = plugin::detail::api();
+
+        if (!plugin::detail::loader_at_least(0, 12)) {
+            plugin::fail("Links in saved games need MT2 Loader 0.12.0 or newer (this is {})", plugin::loader_version());
+        }
+
+        if (!api.saved_set_link(&api, target, std::string(key).c_str(), other)) {
+            plugin::fail("Couldn't keep the link '{}' on {} in the saved game (the line above says why)", key, Address(target).describe());
+        }
+    }
+
+    void* link(std::string_view key) const {
+        const plugin::raw::PluginApi& api = plugin::detail::api();
+
+        if (!plugin::detail::loader_at_least(0, 12)) {
+            return nullptr;
+        }
+
+        return api.saved_get_link(&api, target, std::string(key).c_str());
     }
 
     std::vector<std::string> keys() const {
@@ -3078,16 +3130,27 @@ private:
     std::optional<std::string> read(std::string_view key) const {
         const plugin::raw::PluginApi& api = plugin::detail::api();
         std::string name(key);
-        std::string value(256, '\0');
+        // Most values are short, and most reads find none: those take no allocation.
+        std::array<char, 256> buffer;
         std::size_t length = 0;
 
-        if (!api.saved_get(&api, target, name.c_str(), value.data(), value.size(), &length)) {
+        if (!api.saved_get(&api, target, name.c_str(), buffer.data(), buffer.size(), &length)) {
             return std::nullopt;
         }
 
-        if (length >= value.size()) {
+        if (length < buffer.size()) {
+            return std::string(buffer.data(), length);
+        }
+
+        std::string value;
+
+        // A value another thread lengthens in between is read again; one it erases is gone.
+        while (length >= value.size()) {
             value.assign(length + 1, '\0');
-            api.saved_get(&api, target, name.c_str(), value.data(), value.size(), &length);
+
+            if (!api.saved_get(&api, target, name.c_str(), value.data(), value.size(), &length)) {
+                return std::nullopt;
+            }
         }
 
         value.resize(length);
@@ -3194,14 +3257,29 @@ inline std::map<std::string, std::map<std::string, int, std::less<>>, std::less<
 }
 
 inline std::optional<int> added_enum_value(const std::string& enum_name, std::string_view text) {
-    auto& values = added_enum_values()[enum_name];
-    auto found = values.find(text);
+    std::shared_lock reading(lookups_lock());
+    const auto& all = added_enum_values();
+    auto values = all.find(enum_name);
 
-    return found == values.end() ? std::nullopt : std::optional<int>(found->second);
+    if (values == all.end()) {
+        return std::nullopt;
+    }
+
+    auto found = values->second.find(text);
+
+    return found == values->second.end() ? std::nullopt : std::optional<int>(found->second);
 }
 
 inline std::optional<std::string> added_enum_word(const std::string& enum_name, int value) {
-    for (const auto& [word, added] : added_enum_values()[enum_name]) {
+    std::shared_lock reading(lookups_lock());
+    const auto& all = added_enum_values();
+    auto values = all.find(enum_name);
+
+    if (values == all.end()) {
+        return std::nullopt;
+    }
+
+    for (const auto& [word, added] : values->second) {
         if (added == value) {
             return word;
         }
@@ -3376,14 +3454,24 @@ public:
         }
 
         auto& all = plugin::detail::added_enum_values();
-        bool first = all.find(enum_name) == all.end() || all[enum_name].empty();
+        bool first = false;
+
+        {
+            std::shared_lock reading(plugin::detail::lookups_lock());
+            first = all.find(enum_name) == all.end() || all.find(enum_name)->second.empty();
+        }
 
         if (first) {
             plugin::detail::teach_enum(enum_name);
         }
 
-        all[enum_name][std::string(text)] = value;
+        {
+            std::unique_lock writing(plugin::detail::lookups_lock());
+            all[enum_name][std::string(text)] = value;
+        }
+
         plugin::detail::remember_undo([enum_name = enum_name, text = std::string(text)] {
+            std::unique_lock writing(plugin::detail::lookups_lock());
             plugin::detail::added_enum_values()[enum_name].erase(text);
         });
         plugin::log("{} reads \"{}\" as {}", enum_name, text, value);
@@ -3435,9 +3523,12 @@ struct CustomRules {
     // The New Game window's rules, which the game copies field by field when it starts the game.
     const void* new_game = nullptr;
     bool listing_new_game = false;
+    // Where each list's rows for this plugin start, set aside while the game sizes the list.
+    std::map<const void*, int> first_rows;
     std::optional<std::map<std::string, bool, std::less<>>> starting_game;
-    // The loaded game's rules, read from its rules.vrt.
+    // The loaded game's rules, read from its rules.vrt (while a game loads, on a worker thread) and asked from any.
     std::map<std::string, bool, std::less<>> in_game;
+    std::shared_mutex in_game_lock;
 };
 
 inline CustomRules& custom_rules() {
@@ -3491,14 +3582,30 @@ inline int shown_slot(const void* rules) {
     return static_cast<int>(shown.size()) - 1;
 }
 
-// Under the game's own rules: a gap, then a checkbox for each of this plugin's. Other plugins add theirs after.
-inline void add_rule_rows(const void* rules, void* grid) {
-    const CustomRules& state = custom_rules();
-    const RuleList& list = rule_list();
-    int row = game::field<int>(grid, "mmoGridView::dimY");
-    int slot = shown_slot(rules);
+// Room under the game's own rules for a gap and this plugin's rows, made while the game sizes the list: sizing a list
+// again later deletes every cell in it. Other plugins make theirs after.
+inline void make_room_for_rules(void* grid) {
+    CustomRules& state = custom_rules();
+    int rows = game::field<int>(grid, "mmoGridView::dimY");
 
-    list.set_rows(grid, row + 1 + static_cast<int>(state.names.size()));
+    state.first_rows[grid] = rows;
+    rule_list().set_rows(grid, rows + 1 + static_cast<int>(state.names.size()));
+}
+
+// In the room made for them: a gap, then a checkbox for each of this plugin's rules.
+inline void add_rule_rows(const void* rules, void* grid) {
+    CustomRules& state = custom_rules();
+    const RuleList& list = rule_list();
+    auto first_row = state.first_rows.find(grid);
+
+    if (first_row == state.first_rows.end()) {
+        return;
+    }
+
+    int row = first_row->second;
+    int slot = shown_slot(rules);
+    state.first_rows.erase(first_row);
+
     list.set_empty(grid, 0, row);
     list.set_empty(grid, 1, row);
 
@@ -3555,6 +3662,10 @@ inline void follow_custom_rules() {
         custom_rules().listing_new_game = false;
     });
 
+    game::in("mmoCustomRules::SetupGrid").call("mmoGridView::SetRowCount").every().after([](void* grid, int) {
+        make_room_for_rules(grid);
+    });
+
     game::in("mmoCustomRules::SetupGrid").after([](void* rules, void* grid, bool) {
         if (custom_rules().listing_new_game) {
             custom_rules().new_game = rules;
@@ -3590,12 +3701,15 @@ inline void follow_custom_rules() {
     });
 
     game::in("mmoModeInGame::DoInit").before([](void*) {
+        std::unique_lock writing(custom_rules().in_game_lock);
         custom_rules().in_game.clear();
     });
 
     // Starting or loading a game reads its rules.vrt into a new rules object, then copies the game's own rules out.
     game::in("vsObject<mmoCustomRules, vsNullObject>::LoadFromRecord").after([](void* rules, void*, void*) {
-        custom_rules().in_game = rule_values(rules);
+        auto values = rule_values(rules);
+        std::unique_lock writing(custom_rules().in_game_lock);
+        custom_rules().in_game = std::move(values);
     });
 }
 
@@ -3621,7 +3735,9 @@ public:
 
     // Checked for the game that's loaded (false outside a game).
     bool enabled() const {
-        const auto& in_game = plugin::detail::custom_rules().in_game;
+        auto& rules = plugin::detail::custom_rules();
+        std::shared_lock reading(rules.in_game_lock);
+        const auto& in_game = rules.in_game;
         auto found = in_game.find(rule_name);
 
         return found != in_game.end() && found->second;

@@ -171,6 +171,17 @@ static void set_class() {
 namespace quest_menu {
 
 void install() {
+    game::in("_ZN6mmoNPCD1Ev").before([](void* npc) {
+        if (npc == shown_npc) {
+            shown_npc = nullptr;
+        }
+    });
+
+    game::in("mmoModeInGame::DoInit").before([](void*) {
+        menu = nullptr;
+        shown_npc = nullptr;
+    });
+
     // "QuestsExpanded menu_main 1" and "QuestsExpanded menu_repeatable 0" (a checkbox adds its value),
     // "QuestsExpanded menu_level" (the level edited) or "QuestsExpanded menu_class" (a class picked).
     game::in("mmoWindow::UICommand").after([](bool handled, void* window, game::Record command) {

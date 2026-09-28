@@ -6,8 +6,10 @@
 
 #include <mt2loader.hpp>
 
-// The current main quest, or the one where the player finished the main questline: kept so they're invited back if
-// the line grows (line_extensions).
+#include <algorithm>
+
+// The current main quest, or the one where the player finished the main questline (at any of its ends): kept so
+// they're invited back if the line grows (line_extensions).
 static bool is_main_line_place(const void* instance) {
     questlines::update();
 
@@ -18,7 +20,9 @@ static bool is_main_line_place(const void* instance) {
         return false;
     }
 
-    return !player::is_finished(instance) || quest::giver(quest) == quest::giver(line->last_quest);
+    void* giver = quest::giver(quest);
+
+    return !player::is_finished(instance) || std::ranges::any_of(line->ends, [&](void* end) { return quest::giver(end) == giver; });
 }
 
 

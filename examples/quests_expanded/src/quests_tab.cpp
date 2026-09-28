@@ -46,6 +46,18 @@ static void handle_command(void* window, const game::Record& command) {
 namespace quests_tab {
 
 void install() {
+    game::in("_ZN6mmoNPCD1Ev").before([](void* npc) {
+        for (auto& [window, shown] : npc_in_window) {
+            if (shown == npc) {
+                shown = nullptr;
+            }
+        }
+    });
+
+    game::in("mmoModeInGame::DoInit").before([](void*) {
+        npc_in_window.clear();
+    });
+
     game::in("mmoNPCInfoWindow::SetNPC").after([](void* window, void* npc) {
         npc_in_window[window] = npc;
         refresh(window);

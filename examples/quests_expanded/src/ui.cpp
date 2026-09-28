@@ -75,6 +75,10 @@ void* open_window(std::string_view id) {
     return window;
 }
 
+void close_window(void* window) {
+    show_window(window, false, false);
+}
+
 void set_window_title(void* window, std::string_view title) {
     set_title(window, game::LocalizedText(title));
 }

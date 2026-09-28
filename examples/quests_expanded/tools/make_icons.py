@@ -2,8 +2,9 @@
 
 Drawn like the game's own icons: a flat white shape, 128 pixels square on transparent, its lower part a shade darker.
 The quest card's arrows stand on a colored strip where its number was (quests_expanded_hand_off_backing.mat in red,
-quests_expanded_hand_in_backing.mat in green): a hand-off's arrow points left, a hand-in's right, and one that starts a chapter comes from a bar. Run from
-anywhere:
+quests_expanded_branch_backing.mat in orange, quests_expanded_hand_in_backing.mat in green): a hand-off's arrow points
+left, a branch quest's splits into two pointing left, a hand-in's points right, and one that starts a chapter comes from
+a bar. Run from anywhere:
 
     python make_icons.py
 
@@ -81,7 +82,24 @@ def chapter_arrow() -> Image.Image:
     return image
 
 
-# Two arrows chasing each other around a circle.
+# A branch quest: one shaft from the right splitting into two arrows pointing left, as a hand-off's does.
+def branch_arrows() -> Image.Image:
+    image, draw = canvas()
+    width = int(0.13 * BIG)
+    split = (0.62 * BIG, 0.50 * BIG)
+
+    draw.rectangle((0.60 * BIG, 0.435 * BIG, 0.92 * BIG, 0.565 * BIG), fill=(255, 255, 255, 255))
+
+    for arm_y, head_y in ((0.30, 0.26), (0.70, 0.74)):
+        arm_end = (0.38 * BIG, arm_y * BIG)
+        draw.line([split, arm_end], fill=(255, 255, 255, 255), width=width)
+        draw.ellipse((split[0] - width / 2, split[1] - width / 2, split[0] + width / 2, split[1] + width / 2), fill=(255, 255, 255, 255))
+        head = [(0.08, head_y), (0.40, head_y - 0.17), (0.40, head_y + 0.17)]
+        draw.polygon([(x * BIG, y * BIG) for x, y in head], fill=(255, 255, 255, 255))
+
+    return image
+
+
 def save(image: Image.Image, name: str):
     folder = MOD / "quests_expanded"
     folder.mkdir(parents=True, exist_ok=True)
@@ -97,6 +115,7 @@ def main():
     save(two_tone(arrow(pointing_right=False), WHITE), "hand_off")
     save(two_tone(arrow(pointing_right=True), WHITE), "hand_in")
     save(two_tone(chapter_arrow(), WHITE), "chapter")
+    save(two_tone(branch_arrows(), WHITE), "branch")
 
 
 if __name__ == "__main__":

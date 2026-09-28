@@ -15,7 +15,7 @@ void install() {
         void* quest = player::quest_of(instance);
         const Questline* line = quest != nullptr ? questlines::line_of_quest(quest) : nullptr;
 
-        if (line != nullptr && line->last_quest == quest) {
+        if (line != nullptr && questlines::is_end(*line, quest)) {
             line_progress::finish(toon, *line);
         }
     });

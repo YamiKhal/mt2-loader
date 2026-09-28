@@ -96,6 +96,7 @@ mmoWindow
 					clickable true;
 					editable true;
 					maxLength 3;
+					margin 5;
 					tooltip "{quests_expanded_level_gate}";
 					command "MessageTo Window QuestsExpanded menu_level";
 				}

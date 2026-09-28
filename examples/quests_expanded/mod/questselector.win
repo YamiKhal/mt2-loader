@@ -29,6 +29,25 @@ mmoQuestSelector
 				}
 				mmoButtonPane
 				{
+					id quests_expanded_branch;
+					dims 20 160;
+					anchorType TopLeft;
+					anchorPos 0 0;
+					visible false;
+					clickable true;
+					border true;
+					edges "Top Left Bottom";
+					corners "TopLeft BottomLeft";
+					cornerSize 10;
+					material "quests_expanded_branch_backing";
+					enabledMaterial "quests_expanded_branch_backing";
+					highlightMaterial "quests_expanded_branch_backing";
+					iconMaterial "icon-quests_expanded_branch";
+					iconSize 18 18;
+					tooltip "{quests_expanded_branches_to}";
+				}
+				mmoButtonPane
+				{
 					id quests_expanded_hand_in;
 					dims 20 160;
 					anchorType TopLeft;
@@ -45,6 +64,50 @@ mmoQuestSelector
 					iconMaterial "icon-quests_expanded_hand_in";
 					iconSize 18 18;
 					tooltip "{quests_expanded_sent_from}";
+				}
+			}
+			pages
+			{
+				mmoView
+				{
+					id edit;
+					content
+					{
+						mmoButtonPane
+						{
+							id quests_expanded_details;
+							dims 24 24;
+							anchorType TopRight;
+							anchorPos 34 8;
+							clickable true;
+							border true;
+							edges All;
+							iconMaterial "icon-options";
+							iconSize 16 16;
+							tooltip "{quests_expanded_details}";
+							command "MessageTo Parent QuestsExpanded details";
+						}
+						mmoSlider
+						{
+							id kill_count;
+							anchorPos 10 78;
+							dims 170 20;
+						}
+						mmoComboBox
+						{
+							id quests_expanded_quest_type;
+							dims 95 24;
+							anchorType BottomLeft;
+							anchorPos 10 34;
+							clickable true;
+							edges All;
+							border true;
+							tooltip "{quests_expanded_quest_type}";
+							command "MessageTo Parent QuestsExpanded quest_type";
+							openViewFile "combo_box_contents.win";
+							material "DarkGrey";
+						}
+					}
 				}
 			}
 		}

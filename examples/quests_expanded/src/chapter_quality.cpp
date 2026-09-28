@@ -74,10 +74,15 @@ Quality of(const Questline& line, std::size_t chapter) {
 
     for (void* each : quests) {
         const HandOff* hand_off = questlines::hand_off(each);
+        const std::vector<HandOff>* branches = questlines::branches(each);
 
         kinds.insert(quest::kind(each));
         givers.insert(quest::giver(each));
         quality.broken = quality.broken || (hand_off != nullptr && hand_off->broken != Broken::no);
+
+        if (branches != nullptr) {
+            quality.broken = quality.broken || std::ranges::any_of(*branches, [](const HandOff& branch) { return branch.broken != Broken::no; });
+        }
     }
 
     int kinds_wanted = line.settings.main ? main_kinds_wanted : side_kinds_wanted;

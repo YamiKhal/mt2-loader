@@ -1,0 +1,206 @@
+mmoWindow
+{
+	id "quest_details";
+	dims 380 366;
+	anchorPos 440 80;
+	anchorType TopRight;
+	clickable false;
+	hasTitlebar true;
+	title "{quests_expanded_details_title}";
+	corners "BottomRight"
+	content
+	{
+		mmoView
+		{
+			dims 340 184;
+			anchorType TopLeft;
+			anchorPos 20 20;
+			border true;
+			edges All;
+			material "DarkGrey";
+			content
+			{
+				mmoTextPane
+				{
+					dims 300 24;
+					anchorType TopLeft;
+					anchorPos 10 8;
+					text "{quests_expanded_heading_targets}";
+					size 18;
+					justify left;
+					tooltip "{quests_expanded_targets_hint}";
+				}
+				mmoTextPane
+				{
+					dims 290 24;
+					anchorType TopLeft;
+					anchorPos 10 36;
+					text "";
+					size 14;
+					justify left;
+					id "quests_expanded_target_0";
+					visible false;
+				}
+				mmoButtonPane
+				{
+					id "quests_expanded_remove_target_0";
+					dims 24 24;
+					anchorType TopRight;
+					anchorPos 10 36;
+					text "x";
+					textSize 14;
+					visible false;
+					clickable true;
+					border true;
+					edges All;
+					tooltip "{quests_expanded_remove_target}";
+					command "MessageTo Window QuestsExpanded remove_target 0";
+				}
+				mmoTextPane
+				{
+					dims 290 24;
+					anchorType TopLeft;
+					anchorPos 10 64;
+					text "";
+					size 14;
+					justify left;
+					id "quests_expanded_target_1";
+					visible false;
+				}
+				mmoButtonPane
+				{
+					id "quests_expanded_remove_target_1";
+					dims 24 24;
+					anchorType TopRight;
+					anchorPos 10 64;
+					text "x";
+					textSize 14;
+					visible false;
+					clickable true;
+					border true;
+					edges All;
+					tooltip "{quests_expanded_remove_target}";
+					command "MessageTo Window QuestsExpanded remove_target 1";
+				}
+				mmoTextPane
+				{
+					dims 290 24;
+					anchorType TopLeft;
+					anchorPos 10 92;
+					text "";
+					size 14;
+					justify left;
+					id "quests_expanded_target_2";
+					visible false;
+				}
+				mmoButtonPane
+				{
+					id "quests_expanded_remove_target_2";
+					dims 24 24;
+					anchorType TopRight;
+					anchorPos 10 92;
+					text "x";
+					textSize 14;
+					visible false;
+					clickable true;
+					border true;
+					edges All;
+					tooltip "{quests_expanded_remove_target}";
+					command "MessageTo Window QuestsExpanded remove_target 2";
+				}
+				mmoTextPane
+				{
+					dims 290 24;
+					anchorType TopLeft;
+					anchorPos 10 120;
+					text "";
+					size 14;
+					justify left;
+					id "quests_expanded_target_3";
+					visible false;
+				}
+				mmoButtonPane
+				{
+					id "quests_expanded_remove_target_3";
+					dims 24 24;
+					anchorType TopRight;
+					anchorPos 10 120;
+					text "x";
+					textSize 14;
+					visible false;
+					clickable true;
+					border true;
+					edges All;
+					tooltip "{quests_expanded_remove_target}";
+					command "MessageTo Window QuestsExpanded remove_target 3";
+				}
+				mmoTextPane
+				{
+					dims 290 24;
+					anchorType TopLeft;
+					anchorPos 10 148;
+					text "";
+					size 14;
+					justify left;
+					id "quests_expanded_target_4";
+					visible false;
+				}
+				mmoButtonPane
+				{
+					id "quests_expanded_remove_target_4";
+					dims 24 24;
+					anchorType TopRight;
+					anchorPos 10 148;
+					text "x";
+					textSize 14;
+					visible false;
+					clickable true;
+					border true;
+					edges All;
+					tooltip "{quests_expanded_remove_target}";
+					command "MessageTo Window QuestsExpanded remove_target 4";
+				}
+			}
+		}
+		mmoView
+		{
+			dims 340 130;
+			anchorType TopLeft;
+			anchorPos 20 216;
+			border true;
+			edges All;
+			material "DarkGrey";
+			content
+			{
+				mmoTextPane
+				{
+					dims 300 24;
+					anchorType TopLeft;
+					anchorPos 10 8;
+					text "{quests_expanded_heading_lore}";
+					size 18;
+					justify left;
+				}
+				mmoTextEditPane
+				{
+					id "quests_expanded_lore";
+					dims 320 86;
+					anchorType TopLeft;
+					anchorPos 10 36;
+					justify topleft;
+					size 14;
+					border true;
+					edges All;
+					clickable true;
+					editable true;
+					multiline true;
+					margin 6;
+					canBeEmpty true;
+					maxLength 400;
+					defaultText "{quests_expanded_lore_hint}";
+					command "MessageTo Window QuestsExpanded lore";
+				}
+			}
+		}
+	}
+}

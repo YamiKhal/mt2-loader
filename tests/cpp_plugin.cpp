@@ -234,14 +234,33 @@ static int visits_in_saved_game() {
     }
 }
 
+// Whether the saved game's link "first" is this quest giver, another one, or none.
+static const char* first_in_saved_game(void* npc) {
+    try {
+        void* first = game::saved().link("first");
+
+        return first == npc ? "self" : first != nullptr ? "other" : "none";
+    } catch (const plugin::Error&) {
+        return "none";
+    }
+}
+
 // Runs while the fake game saves a game with two quest givers, closes it and loads it again.
 static void check_saved() {
     game::in("FakeNpc::Generate").after([](void* npc, int kind) {
+        // A link to an object the save leaves out, ahead of a plain value: the link is dropped, the value kept.
+        if (kind == 2) {
+            game::saved().set_link("elsewhere", npc);
+            game::saved().erase("visits");
+            game::saved().set("visits", 3);
+        }
+
         if (kind != 1) {
             return;
         }
 
         game::Saved marker = game::saved(npc);
+        game::saved().set_link("first", npc);
         marker.set("shape", "question");
         marker.set("color", "#FF8800");
         marker.set("uses", 2);
@@ -257,11 +276,34 @@ static void check_saved() {
         check("saved wrong type", marker.get("shape", 5) == 5 && !marker.find<int>("shape").has_value());
         check("saved bad key", error_of([&] { marker.set("bad key!", 1); }).find("Couldn't keep 'bad key!'") != std::string::npos);
         check("saved on an object the game doesn't save", error_of([] { game::saved(&plain).set("x", 1); }).find("Couldn't keep 'x'") != std::string::npos);
+        check("saved link read back", game::saved().link("first") == npc && game::saved().has("first") && !game::saved().find<std::string>("first"));
+        check("saved text replaces a link", [] {
+            game::saved().set_link("swap", game::saved().link("first"));
+            game::saved().set("swap", "text");
+            bool replaced = game::saved().link("swap") == nullptr && game::saved().get("swap", "") == "text";
+            game::saved().erase("swap");
+
+            return replaced;
+        }());
+        check("saved long text read back", [] {
+            bool all_read = true;
+
+            for (std::size_t length : { 255, 256, 5000 }) {
+                std::string text(length, 'x');
+                game::saved().set("long", text);
+                all_read = all_read && game::saved().get("long", "") == text;
+            }
+
+            game::saved().erase("long");
+
+            return all_read && !game::saved().has("long");
+        }());
     });
 
     game::in("FakeNpc::PostResolve").after([](void* npc) {
         game::Saved marker = game::saved(npc);
-        std::string shown = std::format("{} {} visits={}", marker.get("shape", "none"), marker.get("color", "none"), visits_in_saved_game());
+        std::string shown = std::format("{} {} visits={} first={}", marker.get("shape", "none"), marker.get("color", "none"), visits_in_saved_game(),
+            first_in_saved_game(npc));
 
         show_marker(npc, shown.c_str());
     });

@@ -1,5 +1,6 @@
 #include "chapter_rewards.h"
 
+#include "chapter_appeal.h"
 #include "chapter_quality.h"
 #include "line_progress.h"
 #include "line_thoughts.h"
@@ -11,10 +12,6 @@
 #include <mt2loader.hpp>
 
 #include <optional>
-
-// How much a player cares about a chapter: 1 is an ordinary player, 1.5 and up a player it was made for.
-constexpr float cares = 1.0f;
-constexpr float cares_a_lot = 1.5f;
 
 static game::Function<void(void* subscriber)> reward{ "mmoSubscriber::Reward" };
 static game::Function<void(void* subscriber)> big_reward{ "mmoSubscriber::BigReward" };
@@ -28,39 +25,23 @@ static game::Function<void(void* toon, int thought)> add_thought{ "mmoToon::AddT
 static bool repeat_run = false;
 
 
-// Explorers play for the story and Achievers to finish; Socialisers like meeting several quest givers, Killers an elite.
-static float care_of(PlayerType type, const Quality& quality) {
-    switch (type) {
-    case PlayerType::explorer:
-        return 2.0f;
-    case PlayerType::achiever:
-        return 1.5f;
-    case PlayerType::socialiser:
-        return quality.givers > 1 ? 1.5f : 1.0f;
-    case PlayerType::killer:
-        return quality.elite ? 2.0f : 1.0f;
-    default:
-        return 0.5f;
-    }
-}
-
 // A main line's chapter the first time through: players expect a story.
 static void react_fully(void* toon, void* subscriber, const Quality& quality, float care) {
     switch (quality.rating) {
     case Rating::great:
-        if (care >= cares_a_lot) {
+        if (care >= chapter_appeal::cares_a_lot) {
             big_reward(subscriber);
         } else {
             reward(subscriber);
         }
 
-        if (care >= cares) {
+        if (care >= chapter_appeal::cares) {
             add_thought(toon, line_thoughts::great());
         }
 
         break;
     case Rating::fine:
-        if (care >= cares_a_lot) {
+        if (care >= chapter_appeal::cares_a_lot) {
             reward(subscriber);
         }
 
@@ -71,9 +52,9 @@ static void react_fully(void* toon, void* subscriber, const Quality& quality, fl
             break;
         }
 
-        if (care >= cares_a_lot) {
+        if (care >= chapter_appeal::cares_a_lot) {
             big_frustrate(subscriber, line_thoughts::poor());
-        } else if (care >= cares) {
+        } else if (care >= chapter_appeal::cares) {
             frustrate(subscriber, line_thoughts::poor(), nullptr);
         } else {
             soft_frustrate(subscriber);
@@ -94,7 +75,7 @@ static void react_mildly(void* subscriber, const Quality& quality, float care) {
     case Rating::fine:
         break;
     case Rating::poor:
-        if (story::enabled() && (quality.main || care >= cares_a_lot)) {
+        if (story::enabled() && (quality.main || care >= chapter_appeal::cares_a_lot)) {
             soft_frustrate(subscriber);
         }
 
@@ -110,7 +91,7 @@ static void react(void* toon, const Quality& quality) {
         return;
     }
 
-    float care = care_of(*type, quality);
+    float care = chapter_appeal::of(*type, quality);
 
     if (quality.main && !repeat_run) {
         react_fully(toon, subscriber, quality, care);

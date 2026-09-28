@@ -12,6 +12,7 @@ namespace ui {
 void* find_pane(void* view, std::string_view id);
 // A window from a window file, shown and raised; nullptr if no file has it.
 void* open_window(std::string_view id);
+void close_window(void* window);
 void set_window_title(void* window, std::string_view title);
 void set_visible(void* pane, bool visible);
 void set_text(void* text_pane, std::string_view text);

@@ -89,6 +89,11 @@ static void* top_spenders_board() {
 static void add_the_tab() {
     game::enumeration("mmoLeaderboard::Type").add("spenders", top_spenders);
 
+    // Another game's subscribers: counted afresh.
+    game::in("mmoModeInGame::DoInit").before([](void*) {
+        spenders_counted_at = {};
+    });
+
     game::in("mmoLeaderboardSet::GetLeaderboard").after([](void* board, void*, int type) {
         return type == top_spenders ? top_spenders_board() : board;
     });

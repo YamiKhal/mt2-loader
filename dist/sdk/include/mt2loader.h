@@ -262,6 +262,20 @@ struct PluginApi {
         Returns the size they need (with the final '\0'); names is filled when names_size is enough.
     */
     size_t (*find_names)(const PluginApi* api, const char* text, char* names, size_t names_size);
+
+    // ---- Added in loader 0.12.0. ----
+
+    /*
+        A link from one game object to another (a quest to the buildings it sends players to), kept with the first
+        in saved games as the game keeps its own links: saved as the id the save gives the other object, and turned
+        back into that object once a load has read every object. A link to an object that's destroyed goes away.
+        The key is shared with saved_set's: setting a text value there replaces the link, and the other way round.
+
+        saved_set_link keeps target under key (NULL removes it) and returns false, logging why, if it can't.
+        saved_get_link is the object, NULL if there's no link (or the key holds text).
+    */
+    bool (*saved_set_link)(const PluginApi* api, const void* object, const char* key, const void* target);
+    void* (*saved_get_link)(const PluginApi* api, const void* object, const char* key);
 };
 
 // True when the running loader has this field of PluginApi (a newer header than the loader is fine to use).

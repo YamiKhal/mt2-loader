@@ -1,5 +1,6 @@
 #include "quests_report.h"
 
+#include "branch_pull.h"
 #include "chapter_buzz.h"
 #include "chapter_quality.h"
 #include "layout.h"
@@ -70,11 +71,52 @@ static game::Color rating_color(const Quality& quality) {
     return quality.rating == Rating::great ? good_color : plain_color;
 }
 
+// "Main, repeatable, 2 endings": a line whose branches never meet again ends in more than one place.
 static std::string kind_of(const Questline& line) {
     std::string kind = line.settings.main ? "{quests_expanded_kind_main}" : "{quests_expanded_kind_side}";
 
-    return line.settings.repeatable ? kind + " {quests_expanded_kind_repeatable}" : kind;
+    if (line.settings.repeatable) {
+        kind += " {quests_expanded_kind_repeatable}";
+    }
+
+    if (line.ends.size() > 1) {
+        kind += std::format(", {} {{quests_expanded_kind_endings}}", line.ends.size());
+    }
+
+    return kind;
 }
+
+static const char* type_name(PlayerType type) {
+    switch (type) {
+    case PlayerType::explorer:
+        return "{quests_expanded_players_explorers}";
+    case PlayerType::socialiser:
+        return "{quests_expanded_players_socializers}";
+    case PlayerType::achiever:
+        return "{quests_expanded_players_achievers}";
+    case PlayerType::killer:
+        return "{quests_expanded_players_killers}";
+    default:
+        return "{quests_expanded_players_casuals}";
+    }
+}
+
+// Who a branch draws over its other branches; "-" for a chapter that isn't a branch.
+static std::string draws_of(const Questline& line, std::size_t chapter) {
+    if (line.chapters[chapter].branch_of == nullptr) {
+        return "-";
+    }
+
+    std::vector<PlayerType> drawn = branch_pull::of(line, chapter);
+    std::string text;
+
+    for (PlayerType type : drawn) {
+        text += std::format("{}{}", text.empty() ? "" : ", ", type_name(type));
+    }
+
+    return text.empty() ? "{quests_expanded_draws_alike}" : text;
+}
+
 
 // Main lines first, then the ones most played.
 static std::vector<std::size_t> line_order(const std::vector<Questline>& lines, const std::vector<LineStats>& stats) {
@@ -212,7 +254,8 @@ static void fill_headers(void* grid, const std::vector<const char*>& headers) {
     ui::set_row_id(grid, 0, header_row_id);
 }
 
-// A row per chapter under the headers, numbered ("Chapter 2"): its name shows below once it's picked.
+// A row per chapter under the headers, numbered ("Chapter 2", "Chapter 3a" for a branch): its name shows below once
+// it's picked. Players: how many started it, so for a branch how many took it.
 static void fill_chapters(void* window) {
     void* grid = ui::find_pane(window, "quests_expanded_chapters");
     const Questline* line = selected_line();
@@ -222,19 +265,21 @@ static void fill_chapters(void* window) {
         return;
     }
 
-    ui::set_grid_size(grid, 4, static_cast<int>(chapters) + 1);
+    ui::set_grid_size(grid, 6, static_cast<int>(chapters) + 1);
     fill_headers(grid, { "{quests_expanded_column_chapter}", "{quests_expanded_column_rating}", "{quests_expanded_column_score}",
-        "{quests_expanded_column_quests}" });
+        "{quests_expanded_column_quests}", "{quests_expanded_column_players}", "{quests_expanded_column_draws}" });
 
     for (std::size_t chapter = 0; chapter < chapters; chapter++) {
         Quality quality = chapter_quality::of(*line, chapter);
         std::size_t quests = chapter_quality::end_quest(*line, chapter) - chapter_quality::first_quest(*line, chapter);
         int row = static_cast<int>(chapter) + 1;
 
-        ui::set_cell(grid, 0, row, line_titles::default_chapter_title(chapter));
+        ui::set_cell(grid, 0, row, line_titles::default_chapter_title(*line, chapter));
         ui::set_cell(grid, 1, row, rating_of(quality), rating_color(quality));
         ui::set_cell(grid, 2, row, std::to_string(quality.score));
         ui::set_cell(grid, 3, row, std::to_string(quests));
+        ui::set_cell(grid, 4, row, std::to_string(line_stats::players_starting(*line, chapter)));
+        ui::set_cell(grid, 5, row, draws_of(*line, chapter));
         ui::set_row_id(grid, row, static_cast<int>(chapter));
     }
 
@@ -253,7 +298,7 @@ static void fill_buzz(void* window) {
     ui::set_visible(button, line != nullptr);
 
     if (line != nullptr) {
-        ui::set_tooltip(button, chapter_buzz::of(chapter_quality::of(*line, selected_chapter)));
+        ui::set_tooltip(button, chapter_buzz::of(*line, selected_chapter));
     }
 }
 
@@ -387,13 +432,18 @@ void install() {
             return;
         }
 
-        if (report == nullptr && ui::find_pane(window, "quests_expanded_lines") != nullptr) {
+        // A new game has a new report window.
+        if (window != report && ui::find_pane(window, "quests_expanded_lines") != nullptr) {
             report = window;
         }
 
         if (window == report) {
             refresh(window);
         }
+    });
+
+    game::in("mmoModeInGame::DoInit").before([](void*) {
+        report = nullptr;
     });
 
     game::in("mmoWindow::UpdateUI").after([](void* window, float seconds) {

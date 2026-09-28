@@ -2,7 +2,7 @@
 
 #include <mt2loader.hpp>
 
-static const char* const mod_windows[] = { "report_quests.win", "quest_settings.win" };
+static const char* const mod_windows[] = { "report_quests.win", "quest_settings.win", "quest_details.win" };
 
 static game::Function<int(void* windows, const game::String& filename)> append_from_file{ "vsObjectArray<mmoWindow>::AppendFromFilename" };
 static game::Function<bool(const game::String& filename)> file_exists{ "vsFile::Exists" };

@@ -431,7 +431,7 @@ test_cpp_plugin() {
     check "$label C++: game exits cleanly" exit_is "$?" 0
     check "$label C++: no runtime DLLs to ship" imports_no_runtime "$dll"
     check "$label C++: every check passed" log_lacks "$game" "FAILED"
-    check "$label C++: all checks ran" exit_is "$(count_in_log "$game" "\[cpp_main\] check .*: ok$")" 75
+    check "$label C++: all checks ran" exit_is "$(count_in_log "$game" "\[cpp_main\] check .*: ok$")" 78
     check "$label C++: declarations match the game" log_lacks "$game" "Check the declaration"
     check "$label C++: throwing hook logged once" exit_is "$(count_in_log "$game" "The hook on FakeCharacter::Overloaded(int) failed: this hook fails on purpose. The game's own code ran instead")" 1
     check "$label C++: failed start explained" log_has "$game" "\[cpp_fail\] Not started: stopping on purpose. Its 13 changes are undone"
@@ -480,11 +480,12 @@ test_cpp_plugin() {
     check "$label C++: one extra field per object with values" results_have "$game" "save_plugin_fields=2$"
     check "$label C++: linked object saved too" results_have "$game" "save_link_ids=1$"
     check "$label C++: save counted" log_has "$game" "Saved plugin values on 2 game objects"
-    check "$label C++: new object inherits no values" results_have "$game" "fresh_marker=none none visits=0$"
+    check "$label C++: new object inherits no values" results_have "$game" "fresh_marker=none none visits=0 first=none$"
     check "$label C++: game's own fields load" results_have "$game" "loaded_gold=250$"
     check "$label C++: game's own objects load" results_have "$game" "loaded_npcs=2$"
-    check "$label C++: values back after loading" results_have "$game" "loaded_npc0=1 question #FF8800 visits=3$"
-    check "$label C++: object without values" results_have "$game" "loaded_npc1=2 none none visits=3$"
+    check "$label C++: values back after loading" results_have "$game" "loaded_npc0=1 question #FF8800 visits=3 first=self$"
+    check "$label C++: object without values" results_have "$game" "loaded_npc1=2 none none visits=3 first=other$"
+    check "$label C++: a link goes with the object it points at" results_have "$game" "after_link_target_deleted=none none visits=3 first=none$"
     check "$label C++: values written to a text file" results_have "$game" "rules_plugin_fields=1$"
     check "$label C++: text file keeps the game's fields" results_have "$game" "rules_fields=2$"
     check "$label C++: game skips the values' field" results_have "$game" "rules_skipped=1$"
@@ -647,11 +648,12 @@ test_real_exe() {
     check "real exe: new release demand kept in saved games" exit_is "$(grep -c "Hooked .*<mmoReleaseDemand::Type" <<< "$output")" 10
     check "real exe: story demand follows the release manager" exit_is "$(grep -c "Hooked mmoReleaseManager::\(_SetupNewDemands\|DoRelease\)\|Hooked the call at mmoReleaseManager::_BuildHeat_NewDay" <<< "$output")" 3
     check "real exe: new main questline chapters are release features" grep -q "Hooked mmoRelease::_ScanFor_NewDungeons()" <<< "$output"
-    check "real exe: the Quests report and the settings window follow their windows" exit_is "$(grep -c "Hooked mmoWindow::\(Show(bool, bool) \[clone .part.0\]\|UpdateUI\|UICommand\)" <<< "$output")" 4
+    check "real exe: the Quests report and the settings and details windows follow their windows" exit_is "$(grep -c "Hooked mmoWindow::\(Show(bool, bool) \[clone .part.0\]\|UpdateUI\|UICommand\)" <<< "$output")" 5
     # The Story demand is a custom rule: its checkbox in the game's lists, and its value in each saved game's rules.vrt.
     check "real exe: values in the game's text files ready" grep -q "Plugin values in the game's text files (like a save's rules.vrt): ready" <<< "$output"
     check "real exe: values kept on rules" grep -q "^saves mmoCustomRules: yes$" <<< "$output"
-    check "real exe: custom rule follows the rules" exit_is "$(grep -c "Hooked \(mmoNewGameWindow::_PopulateCustomRulesGrid\|mmoCustomRules::SetupGrid\|mmoPane::Command\|mmoModeInGame::SetNewGameParameters\|mmoModeInGame::DoInit\|vsObject<mmoCustomRules, vsNullObject>::\(SaveToFilename\|LoadFromRecord\)\)" <<< "$output")" 8
+    check "real exe: custom rule follows the rules" exit_is "$(grep -c "Hooked \(mmoNewGameWindow::_PopulateCustomRulesGrid\|mmoCustomRules::SetupGrid\|mmoPane::Command\|mmoModeInGame::SetNewGameParameters\|vsObject<mmoCustomRules, vsNullObject>::\(SaveToFilename\|LoadFromRecord\)\)" <<< "$output")" 7
+    check "real exe: custom rules forget the last game's" grep -q "^\[quests_expanded\] Hooked mmoModeInGame::DoInit()$" <<< "$output"
     check "real exe: custom rules make room while the game sizes its list" exit_is "$(grep -c "Hooked the call at mmoCustomRules::SetupGrid" <<< "$output")" 2
     check "real exe: custom rule added" grep -q "Custom rule \"quests_expanded_disable_story\" added" <<< "$output"
 }

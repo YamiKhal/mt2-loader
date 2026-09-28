@@ -50,11 +50,11 @@ static Header header_for(void* npc) {
     }
 
     if (line->start == npc) {
-        return Header{ Names::chapter, line_names::first_chapter_name(npc), line_titles::default_chapter_title(0), line, 0 };
+        return Header{ Names::chapter, line_names::first_chapter_name(npc), line_titles::default_chapter_title(*line, 0), line, 0 };
     }
 
     if (std::optional<std::size_t> chapter = questlines::chapter_started_by(npc)) {
-        return Header{ Names::chapter, line_names::chapter_name(npc), line_titles::default_chapter_title(*chapter), line, *chapter };
+        return Header{ Names::chapter, line_names::chapter_name(npc), line_titles::default_chapter_title(*line, *chapter), line, *chapter };
     }
 
     void* first_quest = quest_giver::quest(npc, 0);

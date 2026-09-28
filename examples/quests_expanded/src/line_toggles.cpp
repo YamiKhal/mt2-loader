@@ -9,8 +9,9 @@
 // The window file has the cog in each place along the buttons' row, counted from the right.
 constexpr int settings_places = 2;
 
+// A branch, or where branches meet, starts a chapter anyway.
 static bool can_start_chapter(const void* npc) {
-    return npc != nullptr && questlines::gets_hand_in(npc);
+    return npc != nullptr && questlines::gets_hand_in(npc) && !questlines::starts_chapter_anyway(npc);
 }
 
 // The cog opens the quest giver's line and chapter settings (quest_menu), next to the New chapter button when shown.

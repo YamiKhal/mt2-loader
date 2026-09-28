@@ -237,15 +237,17 @@ mmoWindow
 									anchorPos 0 0;
 									anchorType TopLeft;
 									textJustification "bottomleft";
-									dimX 4;
+									dimX 6;
 									dimY 2000;
 									clickable true;
 									command "MessageTo Window QuestsExpanded select_chapter";
 									fieldWidth {
-										170.0;
-										130.0;
-										110.0;
-										110.0;
+										120.0;
+										90.0;
+										70.0;
+										70.0;
+										80.0;
+										90.0;
 									};
 								}
 							}

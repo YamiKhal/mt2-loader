@@ -1,5 +1,7 @@
 #pragma once
 
+#include <mt2loader.hpp>
+
 #include <vector>
 
 // A player's place with each quest giver they've met: one record (mmoQuestGiverProgress) per quest giver, with the
@@ -9,6 +11,8 @@ namespace player {
 constexpr int met_nothing_taken = -1;
 
 std::vector<void*> records(void* toon);
+// The game's own list, without a copy: only for a loop that neither adds nor removes records.
+const game::Objects& records_in_place(void* toon);
 void* record_for(void* toon, void* npc);
 void* giver_of(const void* record);
 

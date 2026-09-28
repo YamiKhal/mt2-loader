@@ -12,7 +12,7 @@
 
 #include <algorithm>
 #include <climits>
-#include <optional>
+#include <vector>
 
 // mmoRange, as mmoRange::Contains reads it.
 struct Range {
@@ -54,24 +54,15 @@ static Range side_line_start(const Questline& line, const Range& game_range) {
     return Range{ gate, std::max(game_range.maximum, gate), true };
 }
 
-// The later chapter this quest giver's next quest leads into: the quest right before the chapter's first.
-static std::optional<std::size_t> chapter_led_into(void* npc, int next, const Questline& line) {
+// Whether a player may take this quest giver's next quest: a hand-off into a later chapter needs that chapter's gate to
+// let them in, a branch quest one of its chapters' (they take a branch they're let into).
+static bool lets_on(void* npc, int next, const Questline& line) {
     void* quest = quest_giver::quest(npc, next);
-    auto found = std::find(line.quests.begin(), line.quests.end(), quest);
+    std::vector<std::size_t> chapters = quest != nullptr ? questlines::chapters_led_into(quest) : std::vector<std::size_t>{};
 
-    if (quest == nullptr || found == line.quests.end()) {
-        return std::nullopt;
-    }
-
-    std::size_t index = static_cast<std::size_t>(found - line.quests.begin());
-
-    for (std::size_t chapter = 1; chapter < line.chapters.size(); chapter++) {
-        if (line.chapters[chapter].first_quest == index + 1) {
-            return chapter;
-        }
-    }
-
-    return std::nullopt;
+    return chapters.empty() || std::ranges::any_of(chapters, [&](std::size_t chapter) {
+        return chapter_gates::lets_in(asking_player, line, chapter);
+    });
 }
 
 static Range range_for(void* npc, const Range& game_range) {
@@ -95,9 +86,9 @@ static Range range_for(void* npc, const Range& game_range) {
     }
 
     bool at_start = npc == line->start && next == 0;
-    std::optional<std::size_t> gated_chapter = at_start ? std::optional<std::size_t>(0) : chapter_led_into(npc, next, *line);
+    bool let_on = at_start ? chapter_gates::lets_in(asking_player, *line, 0) : lets_on(npc, next, *line);
 
-    if (gated_chapter && !chapter_gates::lets_in(asking_player, *line, *gated_chapter)) {
+    if (!let_on) {
         return no_one();
     }
 

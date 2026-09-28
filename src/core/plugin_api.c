@@ -536,6 +536,29 @@ static bool api_saved_get(const PluginApi* api, const void* object, const char* 
     return own_key(api, key, full_key, sizeof full_key) && saved_data_get(object, full_key, value, value_size, length);
 }
 
+static bool api_saved_set_link(const PluginApi* api, const void* object, const char* key, const void* target) {
+    char full_key[SAVED_KEY_CAPACITY * 2];
+    char problem[256];
+
+    if (!own_key(api, key, full_key, sizeof full_key)) {
+        return false;
+    }
+
+    if (!saved_data_set_link(object, full_key, target, problem, sizeof problem)) {
+        api_log(api, "Couldn't keep the link '%s' in the saved game: %s", key, problem);
+
+        return false;
+    }
+
+    return true;
+}
+
+static void* api_saved_get_link(const PluginApi* api, const void* object, const char* key) {
+    char full_key[SAVED_KEY_CAPACITY * 2];
+
+    return own_key(api, key, full_key, sizeof full_key) ? (void*)saved_data_get_link(object, full_key) : NULL;
+}
+
 static size_t api_saved_keys(const PluginApi* api, const void* object, char* keys, size_t keys_size) {
     char prefix[SAVED_KEY_CAPACITY * 2];
     snprintf(prefix, sizeof prefix, "%s/", api->mod_id);
@@ -609,6 +632,8 @@ void plugin_api_fill(PluginApi* api, const char* mod_id, const wchar_t* mod_fold
         .saved_get = api_saved_get,
         .saved_keys = api_saved_keys,
         .saved_root = api_saved_root,
+        .saved_set_link = api_saved_set_link,
+        .saved_get_link = api_saved_get_link,
         .find_names = api_find_names,
     };
 }

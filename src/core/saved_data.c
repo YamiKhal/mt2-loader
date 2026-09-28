@@ -32,10 +32,16 @@
 #define SAVE_TEMPLATE_PREFIX "_ZNK8vsObjectI"
 #define SAVE_TO_STREAM_SUFFIX "E12SaveToStreamEP14vsRecordWriterP19vsSaveObjectContext"
 #define SAVE_VALUES_SUFFIX "E18SaveValuesToStreamEP14vsRecordWriterP19vsSaveObjectContext"
+// A link's value starts with this (a character no plugin text has): in memory the object's address, in a saved game
+// "#" and the id the save gives the object.
+#define LINK_MARK '\x1f'
+#define LINK_TEXT_CAPACITY 32
 
+// A value is text, or a link to another game object (then value is "").
 typedef struct Entry {
     char* key;
     char* value;
+    const void* link;
 } Entry;
 
 typedef struct ObjectData {
@@ -57,6 +63,21 @@ typedef struct Sites {
     Site items[MAX_SITES];
     int count;
 } Sites;
+
+// Objects some link points at, and how many links do, so a destroyed object that's no link target costs nothing.
+typedef struct LinkTarget {
+    const void* target;
+    int links;
+    struct LinkTarget* next;
+} LinkTarget;
+
+// A link read from a saved game, by the id the save gave its object, until the load has every object.
+typedef struct PendingLink {
+    void* context;
+    const void* object;
+    char* key;
+    int id;
+} PendingLink;
 
 // What an object's SaveToStream promised the game it would write: the extra field, with these texts.
 typedef struct Promise {
@@ -86,11 +107,16 @@ typedef void (*RecordMakeFunction)(void* record);
 typedef void (*RecordSetLabelFunction)(void* record, const GameString* label);
 typedef void (*RecordSetTokenCountFunction)(void* record, int count);
 typedef void (*RecordAddChildFunction)(void* record, void* child);
+typedef void* (*GetObjectIdFunction)(void* context, int id);
 
 static SavedDataLog log_line;
 static bool started;
 
 static ObjectData* buckets[BUCKET_COUNT];
+static LinkTarget* link_targets[BUCKET_COUNT];
+static PendingLink* pending_links;
+static int pending_link_count;
+static int pending_link_capacity;
 static volatile LONG object_count;
 static SRWLOCK store_lock = SRWLOCK_INIT;
 
@@ -123,6 +149,7 @@ static RecordMakeFunction record_make;
 static RecordSetLabelFunction record_set_label;
 static RecordSetTokenCountFunction record_set_token_count;
 static RecordAddChildFunction record_add_child;
+static GetObjectIdFunction get_object_id;
 
 static _Thread_local const void* pending_object;
 static _Thread_local const uint8_t* pending_start;
@@ -170,8 +197,64 @@ static ObjectData* find_or_add_data(const void* object) {
     return data;
 }
 
+static LinkTarget** link_target_slot(const void* target) {
+    LinkTarget** slot = &link_targets[bucket_of(target)];
+
+    while (*slot != NULL && (*slot)->target != target) {
+        slot = &(*slot)->next;
+    }
+
+    return slot;
+}
+
+static void count_link(const void* target, int change) {
+    if (target == NULL) {
+        return;
+    }
+
+    LinkTarget** slot = link_target_slot(target);
+
+    if (*slot == NULL && change > 0) {
+        *slot = calloc(1, sizeof **slot);
+
+        if (*slot != NULL) {
+            (*slot)->target = target;
+        }
+    }
+
+    if (*slot == NULL) {
+        return;
+    }
+
+    (*slot)->links += change;
+
+    if ((*slot)->links <= 0) {
+        LinkTarget* gone = *slot;
+        *slot = gone->next;
+        free(gone);
+    }
+}
+
+static bool is_link_target(const void* target) {
+    return *link_target_slot(target) != NULL;
+}
+
+// The object as a whole: a pointer to one of its bases (mmoQuestDestination inside a building) moves to its start,
+// by the offset its class table keeps just before the functions.
+static const void* complete_object(const void* object) {
+    const intptr_t* table = NULL;
+    intptr_t offset = 0;
+
+    if (object == NULL || !memory_read(object, &table, sizeof table) || table == NULL || !memory_read(table - 2, &offset, sizeof offset)) {
+        return object;
+    }
+
+    return (const uint8_t*)object + offset;
+}
+
 static void free_data(ObjectData* data) {
     for (int index = 0; index < data->count; index++) {
+        count_link(data->entries[index].link, -1);
         free(data->entries[index].key);
         free(data->entries[index].value);
     }
@@ -216,8 +299,10 @@ static bool put_entry(ObjectData* data, const char* key, const char* value) {
     }
 
     if (index >= 0) {
+        count_link(data->entries[index].link, -1);
         free(data->entries[index].value);
         data->entries[index].value = copy;
+        data->entries[index].link = NULL;
 
         return true;
     }
@@ -238,6 +323,7 @@ static bool put_entry(ObjectData* data, const char* key, const char* value) {
 
     data->entries[data->count].key = _strdup(key);
     data->entries[data->count].value = copy;
+    data->entries[data->count].link = NULL;
 
     if (data->entries[data->count].key == NULL) {
         free(copy);
@@ -250,6 +336,18 @@ static bool put_entry(ObjectData* data, const char* key, const char* value) {
     return true;
 }
 
+static bool put_link_entry(ObjectData* data, const char* key, const void* target) {
+    if (!put_entry(data, key, "")) {
+        return false;
+    }
+
+    int index = find_entry(data, key);
+    data->entries[index].link = target;
+    count_link(target, 1);
+
+    return true;
+}
+
 static void remove_entry(const void* object, const char* key) {
     ObjectData* data = find_data(object);
     int index = data != NULL ? find_entry(data, key) : -1;
@@ -258,6 +356,7 @@ static void remove_entry(const void* object, const char* key) {
         return;
     }
 
+    count_link(data->entries[index].link, -1);
     free(data->entries[index].key);
     free(data->entries[index].value);
     data->entries[index] = data->entries[data->count - 1];
@@ -614,8 +713,15 @@ static char** snapshot_of(const void* object, int* text_count) {
     }
 
     for (int index = 0; texts != NULL && index < data->count; index++) {
-        texts[index * 2] = _strdup(data->entries[index].key);
-        texts[index * 2 + 1] = _strdup(data->entries[index].value);
+        char link[LINK_TEXT_CAPACITY];
+        const Entry* entry = &data->entries[index];
+
+        if (entry->link != NULL) {
+            snprintf(link, sizeof link, "%c%llx", LINK_MARK, (unsigned long long)(uintptr_t)entry->link);
+        }
+
+        texts[index * 2] = _strdup(entry->key);
+        texts[index * 2 + 1] = _strdup(entry->link != NULL ? link : entry->value);
     }
 
     if (texts != NULL) {
@@ -639,6 +745,44 @@ static void free_texts(char** texts, int text_count) {
     }
 
     free(texts);
+}
+
+// A link is written as the id this save gives its object, as the game writes its own links. One to an object this
+// save doesn't have (another file, or gone) is left out.
+static void links_to_ids(char** texts, int* text_count, void* context) {
+    int kept = 0;
+
+    for (int index = 0; index + 1 < *text_count; index += 2) {
+        char* value = texts[index + 1];
+
+        if (value != NULL && value[0] == LINK_MARK) {
+            const void* target = (const void*)(uintptr_t)strtoull(value + 1, NULL, 16);
+            int id = 0;
+
+            if (context == NULL || !original_contains_object(context, target, &id)) {
+                free(texts[index]);
+                free(value);
+
+                continue;
+            }
+
+            char text[LINK_TEXT_CAPACITY];
+            snprintf(text, sizeof text, "%c#%d", LINK_MARK, id);
+            free(value);
+            value = _strdup(text);
+        }
+
+        texts[kept] = texts[index];
+        texts[kept + 1] = value != NULL ? value : _strdup("");
+        kept += 2;
+    }
+
+    // What's left past the kept texts was freed or moved down: the caller frees the whole array.
+    for (int index = kept; index < *text_count; index++) {
+        texts[index] = NULL;
+    }
+
+    *text_count = kept;
 }
 
 // The same calls the game makes for a text field: Next, SetLabel, then the tokens.
@@ -691,16 +835,38 @@ static uintptr_t rtti_save_detour(const void* rtti, const void* object, void* wr
 
     if (promise_count > 0 && promises[promise_count - 1].object == object && promises[promise_count - 1].writer == writer) {
         Promise* promise = &promises[--promise_count];
+        int all_texts = promise->text_count;
 
+        links_to_ids(promise->texts, &promise->text_count, context);
         write_field(writer, promise->texts, promise->text_count);
-        free_texts(promise->texts, promise->text_count);
+        free_texts(promise->texts, all_texts);
         objects_written++;
     }
 
     return result;
 }
 
-static void read_field(void* object, const void* record) {
+static void add_pending_link(void* context, const void* object, const char* key, int id) {
+    if (pending_link_count == pending_link_capacity) {
+        int capacity = pending_link_capacity == 0 ? 16 : pending_link_capacity * 2;
+        PendingLink* grown = realloc(pending_links, (size_t)capacity * sizeof *grown);
+
+        if (grown == NULL) {
+            return;
+        }
+
+        pending_links = grown;
+        pending_link_capacity = capacity;
+    }
+
+    char* copy = _strdup(key);
+
+    if (copy != NULL) {
+        pending_links[pending_link_count++] = (PendingLink){ context, object, copy, id };
+    }
+}
+
+static void read_field(void* object, const void* record, void* context) {
     int token_count = 0;
     memory_read((const uint8_t*)record + RECORD_TOKEN_COUNT_OFFSET, &token_count, sizeof token_count);
 
@@ -711,7 +877,13 @@ static void read_field(void* object, const void* record) {
         const GameString* key = token_as_string(record_get_token(record, index));
         const GameString* value = token_as_string(record_get_token(record, index + 1));
 
-        if (key != NULL && value != NULL && key->length > 0 && key->length < SAVED_KEY_CAPACITY * 2) {
+        if (key == NULL || value == NULL || key->length == 0 || key->length >= SAVED_KEY_CAPACITY * 2) {
+            continue;
+        }
+
+        if (value->length > 2 && value->data[0] == LINK_MARK && value->data[1] == '#') {
+            add_pending_link(context, object, key->data, atoi(value->data + 2));
+        } else {
             put_entry(data, key->data, value->data);
         }
     }
@@ -756,8 +928,15 @@ static uintptr_t rtti_record_save_detour(const void* rtti, const void* object, v
     char** texts = snapshot_of(object, &text_count);
 
     if (texts != NULL) {
-        add_record_field(record, texts, text_count);
-        free_texts(texts, text_count);
+        int all_texts = text_count;
+
+        links_to_ids(texts, &text_count, context);
+
+        if (text_count > 0) {
+            add_record_field(record, texts, text_count);
+        }
+
+        free_texts(texts, all_texts);
         objects_written++;
     }
 
@@ -775,7 +954,7 @@ static uintptr_t rtti_record_load_detour(const void* rtti, void* object, const v
     uintptr_t result = original_rtti_record_load(rtti, object, record, context);
 
     if ((result & 0xff) == 0 && is_loader_field(record)) {
-        read_field(object, record);
+        read_field(object, record, context);
     }
 
     return result;
@@ -791,16 +970,86 @@ static uintptr_t rtti_load_detour(const void* rtti, void* object, void* reader, 
     const void* record = reader_get(reader);
 
     if (is_loader_field(record)) {
-        read_field(object, record);
+        read_field(object, record, context);
     }
 
     return result;
 }
 
+typedef struct LinkFound {
+    const void* object;
+    char* key;
+} LinkFound;
+
+// Every link to an object that's going away (rare: few objects are link targets). Found first, then removed, since
+// removing an object's last value frees it.
+static void remove_links_to(const void* target) {
+    LinkFound* found = NULL;
+    int count = 0;
+    int capacity = 0;
+
+    for (size_t bucket = 0; bucket < BUCKET_COUNT; bucket++) {
+        for (ObjectData* data = buckets[bucket]; data != NULL; data = data->next) {
+            for (int index = 0; index < data->count; index++) {
+                if (data->entries[index].link != target) {
+                    continue;
+                }
+
+                if (count == capacity) {
+                    int grown_capacity = capacity == 0 ? 8 : capacity * 2;
+                    LinkFound* grown = realloc(found, (size_t)grown_capacity * sizeof *grown);
+
+                    if (grown == NULL) {
+                        break;
+                    }
+
+                    found = grown;
+                    capacity = grown_capacity;
+                }
+
+                found[count++] = (LinkFound){ data->object, _strdup(data->entries[index].key) };
+            }
+        }
+    }
+
+    for (int index = 0; index < count; index++) {
+        if (found[index].key != NULL) {
+            remove_entry(found[index].object, found[index].key);
+        }
+
+        free(found[index].key);
+    }
+
+    free(found);
+}
+
+// A link read for an object destroyed before its load ended goes with it, so no later object at that address gets it.
+static void drop_pending_links_of(const void* object) {
+    int kept = 0;
+
+    for (int index = 0; index < pending_link_count; index++) {
+        if (pending_links[index].object == object) {
+            free(pending_links[index].key);
+
+            continue;
+        }
+
+        pending_links[kept++] = pending_links[index];
+    }
+
+    pending_link_count = kept;
+}
+
 static void destructor_detour(void* object) {
-    if (object_count > 0) {
+    if (object_count > 0 || pending_link_count > 0) {
         AcquireSRWLockExclusive(&store_lock);
         remove_data(object);
+        drop_pending_links_of(object);
+
+        if (is_link_target(object)) {
+            remove_links_to(object);
+        }
+
         ReleaseSRWLockExclusive(&store_lock);
     }
 
@@ -823,10 +1072,40 @@ static void save_context_end_detour(void* context) {
     original_save_context_end(context);
 }
 
+// Once a load has every object, the ids its links were saved with become objects again.
+static void resolve_links(void* context) {
+    AcquireSRWLockExclusive(&store_lock);
+    int kept = 0;
+
+    for (int index = 0; index < pending_link_count; index++) {
+        PendingLink* pending = &pending_links[index];
+
+        if (pending->context != context) {
+            pending_links[kept++] = *pending;
+
+            continue;
+        }
+
+        void* target = get_object_id != NULL ? get_object_id(context, pending->id) : NULL;
+        ObjectData* data = target != NULL ? find_or_add_data(pending->object) : NULL;
+
+        if (data != NULL) {
+            put_link_entry(data, pending->key, complete_object(target));
+        }
+
+        free(pending->key);
+    }
+
+    pending_link_count = kept;
+    ReleaseSRWLockExclusive(&store_lock);
+}
+
 static void load_context_end_detour(void* context) {
     if (objects_read > 0) {
         log_line("Loaded plugin values on %d game objects", objects_read);
     }
+
+    resolve_links(context);
 
     objects_read = 0;
     original_load_context_end(context);
@@ -1012,11 +1291,18 @@ bool saved_data_start(uint8_t* game_base, size_t game_size, SavedDataLog log, ch
     hook_counting(game_base, "vsSaveObjectContext::~vsSaveObjectContext()", (void*)save_context_end_detour, (void**)&original_save_context_end);
     hook_counting(game_base, "vsObjectContext::~vsObjectContext()", (void*)load_context_end_detour, (void**)&original_load_context_end);
 
+    char link_problem[HOOK_PROBLEM_CAPACITY];
+    get_object_id = find_function(game_base, "vsObjectContext::GetObjectId(int)", link_problem, sizeof link_problem);
+
     char text_problem[HOOK_PROBLEM_CAPACITY];
     bool text_files = start_text_files(game_base, text_problem, sizeof text_problem);
 
     started = true;
     log_line("Plugin values in saved games: ready (%d places in the game's code save objects, %d kinds of object)", object_saves, save_function_count);
+
+    if (get_object_id == NULL || original_load_context_end == NULL) {
+        log_line("Plugin links between game objects in saved games: not available (%s)", link_problem);
+    }
 
     if (text_files) {
         log_line("Plugin values in the game's text files (like a save's rules.vrt): ready");
@@ -1041,6 +1327,12 @@ bool saved_data_set(const void* object, const char* key, const char* value, char
 
     if (object == NULL) {
         snprintf(problem, problem_size, "there's no game object (null)");
+
+        return false;
+    }
+
+    if (value != NULL && value[0] == LINK_MARK) {
+        snprintf(problem, problem_size, "the value starts with a character kept for links between objects");
 
         return false;
     }
@@ -1083,7 +1375,7 @@ bool saved_data_get(const void* object, const char* key, char* value, size_t val
     ObjectData* data = object != NULL ? find_data(object) : NULL;
     int index = data != NULL ? find_entry(data, key) : -1;
 
-    if (index >= 0) {
+    if (index >= 0 && data->entries[index].link == NULL) {
         const char* stored = data->entries[index].value;
         size_t stored_length = strlen(stored);
 
@@ -1135,6 +1427,49 @@ size_t saved_data_keys(const void* object, const char* prefix, char* keys, size_
     ReleaseSRWLockShared(&store_lock);
 
     return needed;
+}
+
+bool saved_data_set_link(const void* object, const char* key, const void* target, char* problem, size_t problem_size) {
+    if (target == NULL) {
+        return saved_data_set(object, key, NULL, problem, problem_size);
+    }
+
+    if (get_object_id == NULL || original_load_context_end == NULL) {
+        snprintf(problem, problem_size, "links between objects in saved games aren't available (see the start of the log)");
+
+        return false;
+    }
+
+    if (!saved_data_set(object, key, "", problem, problem_size)) {
+        return false;
+    }
+
+    AcquireSRWLockExclusive(&store_lock);
+    ObjectData* data = find_or_add_data(object);
+    bool stored = data != NULL && put_link_entry(data, key, complete_object(target));
+    ReleaseSRWLockExclusive(&store_lock);
+
+    if (!stored) {
+        snprintf(problem, problem_size, "out of memory");
+    }
+
+    return stored;
+}
+
+const void* saved_data_get_link(const void* object, const char* key) {
+    const void* target = NULL;
+
+    AcquireSRWLockShared(&store_lock);
+    ObjectData* data = object != NULL ? find_data(object) : NULL;
+    int index = data != NULL ? find_entry(data, key) : -1;
+
+    if (index >= 0) {
+        target = data->entries[index].link;
+    }
+
+    ReleaseSRWLockShared(&store_lock);
+
+    return target;
 }
 
 void* saved_data_root(void) {

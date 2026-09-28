@@ -29,12 +29,14 @@ static GateKeys keys_of(const Questline& line, std::size_t chapter) {
 
 namespace chapter_gates {
 
+// Unset parts come from the chapter that leads into it, back to the first; where branches meet, from the first branch.
 ChapterGate of(const Questline& line, std::size_t chapter) {
     std::optional<int> level;
     std::optional<int> player_class;
+    std::optional<std::size_t> each = chapter < line.chapters.size() ? std::optional<std::size_t>(chapter) : std::nullopt;
 
-    for (std::size_t each = chapter + 1; each-- > 0 && (!level || !player_class);) {
-        GateKeys keys = keys_of(line, each);
+    for (std::size_t steps = 0; each && steps < line.chapters.size() && (!level || !player_class); steps++) {
+        GateKeys keys = keys_of(line, *each);
         game::Saved saved = game::saved(keys.npc);
 
         if (!level) {
@@ -44,6 +46,9 @@ ChapterGate of(const Questline& line, std::size_t chapter) {
         if (!player_class) {
             player_class = saved.find<int>(keys.player_class);
         }
+
+        const std::vector<std::size_t>& from = line.chapters[*each].from;
+        each = from.empty() ? std::nullopt : std::optional<std::size_t>(from.front());
     }
 
     ChapterGate gate;

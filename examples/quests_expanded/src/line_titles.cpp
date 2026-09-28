@@ -35,20 +35,23 @@ void rename_line(const Questline& line, std::string name) {
     line_names::set_line_name(line.start, name);
 }
 
-std::string default_chapter_title(std::size_t chapter) {
-    return std::format("{} {}", ui::translated("{quests_expanded_chapter}"), chapter + 1);
+std::string default_chapter_title(const Questline& line, std::size_t chapter) {
+    const Chapter& numbered = line.chapters[chapter];
+    std::string letter = numbered.letter != '\0' ? std::string(1, numbered.letter) : "";
+
+    return std::format("{} {}{}", ui::translated("{quests_expanded_chapter}"), numbered.number, letter);
 }
 
 std::string chapter_title(const Questline& line, std::size_t chapter) {
     std::string name = chapter == 0 ? line_names::first_chapter_name(line.start) : line_names::chapter_name(line.chapters[chapter].giver);
 
-    return name.empty() ? default_chapter_title(chapter) : name;
+    return name.empty() ? default_chapter_title(line, chapter) : name;
 }
 
 void rename_chapter(const Questline& line, std::size_t chapter, std::string name) {
     without_braces(name);
 
-    if (name == default_chapter_title(chapter)) {
+    if (name == default_chapter_title(line, chapter)) {
         name.clear();
     }
 
