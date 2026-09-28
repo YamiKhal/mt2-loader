@@ -1,0 +1,53 @@
+mmoWindow
+{
+	id "design_features";
+	dims 650 300;
+	content
+	{
+		mmoView
+		{
+			dims 30 300;
+		}
+		mmoFeaturesView
+		{
+			id "{design_tab_features}";
+			dims 620 300;
+			content
+			{
+				mmoView
+				{
+					id "top_spenders_box";
+					dims 280 120;
+					anchorType TopLeft;
+					anchorPos 20 160;
+					border true;
+					edges All;
+					material "DarkGrey";
+					corners "TopRight";
+					content
+					{
+						mmoCheckbox
+						{
+							id "top_spenders_enabled";
+							dims 180 30;
+							anchorType TopLeft;
+							anchorPos 10 10;
+							label "{top_spenders_enabled}";
+							command "MessageTo Parent Features";
+							clickable true;
+						}
+						mmoTextPane
+						{
+							dims 240 60;
+							anchorType BottomRight;
+							anchorPos 10 10;
+							text "{top_spenders_enabled_description}";
+							size 14;
+							justify right;
+						}
+					}
+				}
+			}
+		}
+	}
+}

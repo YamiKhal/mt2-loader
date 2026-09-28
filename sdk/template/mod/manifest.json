@@ -1,0 +1,11 @@
+{
+    "id": "my_plugin",
+    "name": "My Plugin",
+    "version": "1.0.0",
+    "author": "",
+    "description": "",
+    "loader": {
+        "plugins": ["native/my_plugin.dll"],
+        "game_builds": ["0.30.7"]
+    }
+}

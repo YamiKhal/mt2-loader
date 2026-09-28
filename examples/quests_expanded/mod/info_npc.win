@@ -1,0 +1,81 @@
+mmoNPCInfoWindow
+{
+	id "info_npc";
+	content
+	{
+		mmoMultiTabView
+		{
+			pages
+			{
+				mmoView
+				{
+					id "{npcinfo_tab_quests}";
+					content
+					{
+						mmoTextEditPane
+						{
+							id "quests_expanded_name";
+							dims 240 30;
+							anchorType TopLeft;
+							anchorPos 10 0;
+							justify left;
+							size 20;
+							border false;
+							clickable true;
+							editable true;
+							maxLength 32;
+							tooltip "{quests_expanded_line_name}";
+							command "MessageTo Window QuestsExpanded rename";
+						}
+						mmoButtonPane
+						{
+							id "quests_expanded_chapter";
+							dims 26 26;
+							anchorType TopRight;
+							anchorPos 12 2;
+							visible false;
+							clickable true;
+							toggle true;
+							border true;
+							edges All;
+							iconMaterial "icon-quests_expanded_chapter";
+							iconSize 18 18;
+							tooltip "{quests_expanded_new_chapter}";
+							command "MessageTo Window QuestsExpanded chapter";
+						}
+						mmoButtonPane
+						{
+							id "quests_expanded_settings_0";
+							dims 26 26;
+							anchorType TopRight;
+							anchorPos 12 2;
+							visible false;
+							clickable true;
+							border true;
+							edges All;
+							iconMaterial "icon-options";
+							iconSize 18 18;
+							tooltip "{quests_expanded_settings}";
+							command "MessageTo Window QuestsExpanded settings";
+						}
+						mmoButtonPane
+						{
+							id "quests_expanded_settings_1";
+							dims 26 26;
+							anchorType TopRight;
+							anchorPos 42 2;
+							visible false;
+							clickable true;
+							border true;
+							edges All;
+							iconMaterial "icon-options";
+							iconSize 18 18;
+							tooltip "{quests_expanded_settings}";
+							command "MessageTo Window QuestsExpanded settings";
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,12 @@
+{
+    "id": "quest_markers",
+    "name": "Quest Markers",
+    "version": "1.4.0",
+    "author": "MT2 Tools",
+    "description": "Pick each quest giver's marker: its shape and its color. Quest givers get a Marker tab in their info window, with shapes, a color picker, the color's hex code, and copy and paste. Kept in the saved game.",
+    "tags": ["interface", "npcs"],
+    "loader": {
+        "plugins": ["native/quest_markers.dll"],
+        "game_builds": ["0.30.7"]
+    }
+}

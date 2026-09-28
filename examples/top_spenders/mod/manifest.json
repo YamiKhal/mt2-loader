@@ -1,0 +1,12 @@
+{
+    "id": "top_spenders",
+    "name": "Top Spenders",
+    "version": "1.0.0",
+    "author": "MT2 Tools",
+    "description": "Adds a Spenders tab to the Leaderboards window: the players who have spent the most real money on your game. It can be disabled in Design > Features.",
+    "tags": ["interface", "leaderboards"],
+    "loader": {
+        "plugins": ["native/top_spenders.dll"],
+        "game_builds": ["0.30.7"]
+    }
+}

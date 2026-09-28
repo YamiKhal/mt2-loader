@@ -1,0 +1,68 @@
+mmoLeaderboardsWindow
+{
+	id "report_leaderboards";
+	content
+	{
+		mmoMultiTabView
+		{
+			id "multitabview";
+			pages
+			{
+				mmoLeaderboardView
+				{
+					id "{top_spenders_tab}";
+					anchorType Fill;
+					type "spenders";
+					content
+					{
+						mmoTextPane
+						{
+							dims 480 40;
+							anchorType Top;
+							anchorPos 0 10;
+							text "{top_spenders_title}";
+							size 20;
+							justify "center";
+						}
+						mmoScrollContainer
+						{
+							dims 480 400;
+							anchorPos 0 50;
+							anchorType Top;
+							clickable false;
+							border false;
+							edges "Left Top Right Bottom";
+							material "DarkGrey";
+							content
+							{
+								mmoScrollView
+								{
+									anchorType Fill;
+									clickable false;
+									content
+									{
+										mmoGridView
+										{
+											id leaderboard_grid;
+											dims 480 250;
+											anchorPos 0 0;
+											anchorType TopLeft;
+											textJustification "bottomleft";
+											dimX 2;
+											dimY 20;
+											clickable false;
+											fieldWidth {
+												450
+												30
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,53 @@
+#include "chapter_rewards.h"
+#include "hand_ins.h"
+#include "hand_offs.h"
+#include "layout.h"
+#include "level_gates.h"
+#include "line_extensions.h"
+#include "line_finish.h"
+#include "line_thoughts.h"
+#include "main_line_places.h"
+#include "main_preference.h"
+#include "quest_card.h"
+#include "quest_menu.h"
+#include "quests_report.h"
+#include "quests_tab.h"
+#include "retracing.h"
+#include "settings.h"
+#include "story.h"
+#include "story_demand.h"
+#include "story_releases.h"
+#include "window_files.h"
+
+#include <mt2loader.hpp>
+
+void plugin::init() {
+    read_settings();
+    read_layout();
+
+    retracing::install();
+    hand_ins::install();
+    hand_offs::install();
+    level_gates::install();
+    main_preference::install();
+    main_line_places::install();
+    line_finish::install();
+    line_extensions::install();
+    line_thoughts::install();
+    chapter_rewards::install();
+    story::install();
+    story_demand::install();
+    story_releases::install();
+    quest_card::install();
+    quests_tab::install();
+    quest_menu::install();
+    window_files::install();
+    quests_report::install();
+
+    plugin::log("Quest givers hand players on to each other, and the main questline leads them (main questline preference {}%, "
+        "repeat cooldown {} days; pane visibility at +{:#x}, tooltip at +{:#x}, card quest at +{:#x}, advertisement needs at +{:#x} +{:#x}, "
+        "quest advertisement at +{:#x}, region NPCs at +{:#x} +{:#x}, demand change keys at +{:#x})",
+        settings.main_preference, settings.repeat_cooldown_days, layout.pane_visible, layout.button_tooltip, layout.card_quest,
+        layout.advance_need, layout.loot_need, layout.quest_advertisement, layout.region_npcs, layout.npc_list,
+        layout.demand_change_keys);
+}

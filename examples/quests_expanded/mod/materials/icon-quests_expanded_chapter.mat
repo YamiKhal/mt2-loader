@@ -1,0 +1,10 @@
+Material{
+	name "icon-quests_expanded_chapter"
+	mode normal
+	color 1.0 1.0 1.0 1.0
+	culling none
+	zread false
+	zwrite false
+	glow false
+	texture "quests_expanded/icon_chapter.png" clampUV
+}

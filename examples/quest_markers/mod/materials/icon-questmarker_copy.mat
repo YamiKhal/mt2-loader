@@ -1,0 +1,10 @@
+Material{
+	name "icon-questmarker_copy"
+	mode normal
+	color 1.0 1.0 1.0 1.0
+	culling none
+	zread false
+	zwrite false
+	glow false
+	texture "questmarkers/icon_copy.png" clampUV
+}

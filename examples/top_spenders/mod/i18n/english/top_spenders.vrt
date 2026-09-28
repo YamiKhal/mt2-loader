@@ -1,0 +1,4 @@
+top_spenders_tab "Spenders"
+top_spenders_title "Biggest Spenders"
+top_spenders_enabled "Enable Top Spenders"
+top_spenders_enabled_description "If enabled, the Leaderboards window gets a tab for the players who have spent the most real money on your game.  (Requires Leaderboards technology)"

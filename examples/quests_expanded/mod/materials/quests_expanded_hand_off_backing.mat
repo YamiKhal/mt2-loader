@@ -1,0 +1,12 @@
+Material{
+	mode normal
+	color 1.0 1.0 1.0 1.0
+	culling none
+	layer -5
+	zread false
+	shader "panelbacking_v.glsl" "panelbacking_f.glsl"
+
+	uniformColor "bright" 0.62 0.08 0.05 1
+	uniformColor "dark" 0.48 0.05 0.03 1
+	uniformColor "swirl" 0.06 0.002 0.001 1
+}

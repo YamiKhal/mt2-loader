@@ -1,0 +1,11 @@
+Material {
+	color 1.0 1.0 1.0 1.0
+	culling none
+	alpharef 0.5
+	zread true
+	zwrite true
+	mode normal
+	flags 1
+	texture "questmarkers/bubble.png"
+	shader "questmarker_sprite_v.glsl" "tint_f.glsl"
+}

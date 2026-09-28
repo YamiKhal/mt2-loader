@@ -1,0 +1,56 @@
+[
+    {
+        "key": "default_shape",
+        "label": "Default marker",
+        "description": "The marker of quest givers that have none picked in their Marker tab",
+        "type": "choice",
+        "default": "game",
+        "options": [
+            {
+                "value": "game",
+                "label": "The game's own"
+            },
+            {
+                "value": "question",
+                "label": "Question mark"
+            },
+            {
+                "value": "star",
+                "label": "Star"
+            },
+            {
+                "value": "diamond",
+                "label": "Diamond"
+            },
+            {
+                "value": "bubble",
+                "label": "Speech bubble"
+            }
+        ]
+    },
+    {
+        "key": "default_color",
+        "label": "Default color",
+        "description": "The color of the default marker",
+        "type": "color",
+        "default": "#FDFE0C"
+    },
+    {
+        "key": "default_scale",
+        "label": "Default size",
+        "description": "The size of the default marker, times the game's",
+        "type": "float",
+        "min": 0.5,
+        "max": 3.0,
+        "default": 1.0
+    },
+    {
+        "key": "default_height",
+        "label": "Default height",
+        "description": "How far above the game's place the default marker is (the game's marker is 2 tall)",
+        "type": "float",
+        "min": -1.0,
+        "max": 3.0,
+        "default": 0.0
+    }
+]

@@ -1,0 +1,10 @@
+Material{
+	name "icon-questmarker_reset"
+	mode normal
+	color 1.0 1.0 1.0 1.0
+	culling none
+	zread false
+	zwrite false
+	glow false
+	texture "questmarkers/icon_reset.png" clampUV
+}

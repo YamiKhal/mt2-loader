@@ -1,0 +1,11 @@
+{
+    "id": "hello_plugin",
+    "name": "Hello Plugin",
+    "version": "1.0.0",
+    "author": "MT2 Tools",
+    "description": "The smallest native plugin: it writes one line to the MT2 Loader's log. Start a plugin mod from this one.",
+    "loader": {
+        "plugins": ["native/hello_plugin.dll"],
+        "game_builds": ["0.30.7"]
+    }
+}

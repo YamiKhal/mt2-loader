@@ -1,0 +1,127 @@
+mmoWindow
+{
+	id "quest_settings";
+	dims 360 295;
+	anchorPos 440 80;
+	anchorType TopRight;
+	clickable false;
+	hasTitlebar true;
+	title "{quests_expanded_menu_title}";
+	corners "BottomRight"
+	content
+	{
+		mmoView
+		{
+			dims 320 110;
+			anchorType TopLeft;
+			anchorPos 20 20;
+			border true;
+			edges All;
+			material "DarkGrey";
+			content
+			{
+				mmoTextPane
+				{
+					id "quests_expanded_menu_line";
+					dims 300 24;
+					anchorType TopLeft;
+					anchorPos 10 8;
+					text "";
+					size 18;
+					justify left;
+				}
+				mmoCheckbox
+				{
+					id "quests_expanded_menu_main";
+					dims 280 30;
+					anchorType TopLeft;
+					anchorPos 10 40;
+					label "{quests_expanded_label_main}";
+					tooltip "{quests_expanded_main}";
+					command "MessageTo Window QuestsExpanded menu_main";
+					clickable true;
+				}
+				mmoCheckbox
+				{
+					id "quests_expanded_menu_repeatable";
+					dims 280 30;
+					anchorType TopLeft;
+					anchorPos 10 72;
+					label "{quests_expanded_label_repeatable}";
+					tooltip "{quests_expanded_repeatable}";
+					command "MessageTo Window QuestsExpanded menu_repeatable";
+					clickable true;
+				}
+			}
+		}
+		mmoView
+		{
+			dims 320 130;
+			anchorType TopLeft;
+			anchorPos 20 145;
+			border true;
+			edges All;
+			material "DarkGrey";
+			content
+			{
+				mmoTextPane
+				{
+					id "quests_expanded_menu_chapter";
+					dims 300 24;
+					anchorType TopLeft;
+					anchorPos 10 8;
+					text "";
+					size 18;
+					justify left;
+				}
+				mmoTextPane
+				{
+					dims 120 24;
+					anchorType TopLeft;
+					anchorPos 10 46;
+					text "{quests_expanded_label_level_gate}";
+					size 16;
+					justify left;
+				}
+				mmoTextEditPane
+				{
+					id "quests_expanded_menu_level";
+					dims 80 28;
+					anchorType TopLeft;
+					anchorPos 140 42;
+					justify left;
+					size 16;
+					border true;
+					edges All;
+					clickable true;
+					editable true;
+					maxLength 3;
+					tooltip "{quests_expanded_level_gate}";
+					command "MessageTo Window QuestsExpanded menu_level";
+				}
+				mmoTextPane
+				{
+					dims 120 24;
+					anchorType TopLeft;
+					anchorPos 10 86;
+					text "{quests_expanded_label_class_gate}";
+					size 16;
+					justify left;
+				}
+				mmoComboBox
+				{
+					id "quests_expanded_menu_class";
+					dims 170 30;
+					anchorType TopLeft;
+					anchorPos 140 82;
+					clickable true;
+					command "MessageTo Window QuestsExpanded menu_class";
+					edges "All";
+					border true;
+					openViewFile "combo_box_contents.win"
+					material "DarkGrey";
+				}
+			}
+		}
+	}
+}

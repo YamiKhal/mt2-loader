@@ -1,0 +1,52 @@
+mmoQuestSelector
+{
+	name "QuestSelector";
+	content
+	{
+		mmoMultiView
+		{
+			id selector_multi;
+			content
+			{
+				mmoButtonPane
+				{
+					id quests_expanded_hand_off;
+					dims 20 160;
+					anchorType TopLeft;
+					anchorPos 0 0;
+					visible false;
+					clickable true;
+					border true;
+					edges "Top Left Bottom";
+					corners "TopLeft BottomLeft";
+					cornerSize 10;
+					material "quests_expanded_hand_off_backing";
+					enabledMaterial "quests_expanded_hand_off_backing";
+					highlightMaterial "quests_expanded_hand_off_backing";
+					iconMaterial "icon-quests_expanded_hand_off";
+					iconSize 18 18;
+					tooltip "{quests_expanded_sends_to}";
+				}
+				mmoButtonPane
+				{
+					id quests_expanded_hand_in;
+					dims 20 160;
+					anchorType TopLeft;
+					anchorPos 0 0;
+					visible false;
+					clickable true;
+					border true;
+					edges "Top Left Bottom";
+					corners "TopLeft BottomLeft";
+					cornerSize 10;
+					material "quests_expanded_hand_in_backing";
+					enabledMaterial "quests_expanded_hand_in_backing";
+					highlightMaterial "quests_expanded_hand_in_backing";
+					iconMaterial "icon-quests_expanded_hand_in";
+					iconSize 18 18;
+					tooltip "{quests_expanded_sent_from}";
+				}
+			}
+		}
+	}
+}

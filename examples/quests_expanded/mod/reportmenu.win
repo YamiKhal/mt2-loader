@@ -1,0 +1,41 @@
+mmoMenuWindow
+{
+	id "reportmenu";
+	dims 195 240;
+
+	itemKey {
+		"quests"
+	}
+	item {
+		mmoMenuWindowItem {
+			key "quests"
+			command "MessageTo Window HideAndOpenWindow report_quests"
+		}
+	}
+
+	content
+	{
+		mmoView
+		{
+			dims 30 240;
+		}
+		mmoScrollContainer
+		{
+			dims 165 240;
+			content
+			{
+				mmoScrollView
+				{
+					content
+					{
+						mmoMenu
+						{
+							id "menu";
+							dims 165 240;
+						}
+					}
+				}
+			}
+		}
+	}
+}

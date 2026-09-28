@@ -1,0 +1,226 @@
+mmoNPCInfoWindow
+{
+	id "info_npc";
+	content
+	{
+		mmoMultiTabView
+		{
+			pages
+			{
+				mmoView
+				{
+					id "{questmarkers_tab}";
+					dims 380 450;
+					anchorPos 10 10;
+					anchorType TopLeft;
+					border false;
+					edges All;
+					corners "BottomRight TopRight";
+					content
+					{
+						mmoLayoutView
+						{
+							id "questmarker_shapes";
+							dims 360 60;
+							anchorPos 0 10;
+							anchorType Top;
+							orientation rows;
+							border false;
+							edges All;
+							material "DarkGrey";
+							corners "TopRight";
+							interiorMargin true;
+							content
+							{
+								mmoButtonPane
+								{
+									id "questmarker_shape_game";
+									dims 44 44;
+									clickable true;
+									toggle true;
+									border true;
+									edges All;
+									iconMaterial "icon-quest_giver";
+									tooltip "{questmarkers_shape_game}";
+									command "MessageTo Window QuestMarker shape game";
+								}
+								mmoButtonPane
+								{
+									id "questmarker_shape_question";
+									dims 44 44;
+									clickable true;
+									toggle true;
+									border true;
+									edges All;
+									iconMaterial "icon-questmarker_question";
+									tooltip "{questmarkers_shape_question}";
+									command "MessageTo Window QuestMarker shape question";
+								}
+								mmoButtonPane
+								{
+									id "questmarker_shape_star";
+									dims 44 44;
+									clickable true;
+									toggle true;
+									border true;
+									edges All;
+									iconMaterial "icon-questmarker_star";
+									tooltip "{questmarkers_shape_star}";
+									command "MessageTo Window QuestMarker shape star";
+								}
+								mmoButtonPane
+								{
+									id "questmarker_shape_diamond";
+									dims 44 44;
+									clickable true;
+									toggle true;
+									border true;
+									edges All;
+									iconMaterial "icon-questmarker_diamond";
+									tooltip "{questmarkers_shape_diamond}";
+									command "MessageTo Window QuestMarker shape diamond";
+								}
+								mmoButtonPane
+								{
+									id "questmarker_shape_bubble";
+									dims 44 44;
+									clickable true;
+									toggle true;
+									border true;
+									edges All;
+									iconMaterial "icon-questmarker_bubble";
+									tooltip "{questmarkers_shape_bubble}";
+									command "MessageTo Window QuestMarker shape bubble";
+								}
+							}
+						}
+						mmoColorPicker
+						{
+							id "questmarker_color";
+							dims 200 200;
+							anchorPos 0 80;
+							anchorType Top;
+							border false;
+							edges All;
+							hasAlpha false;
+							autoLayout true;
+							command "MessageTo Window QuestMarker color";
+						}
+						mmoSlider
+						{
+							id "questmarker_scale";
+							dims 300 20;
+							anchorType Top;
+							anchorPos 0 295;
+							command "MessageTo Window QuestMarker scale";
+							corners "TopLeft BottomRight";
+							cornerSize 4;
+							label "{questmarkers_scale}";
+							minValue 0.5;
+							maxValue 3.0;
+							decimalPlaces 2;
+							initialValue 1.0;
+							increment 0.05;
+							tickInterval 0.5
+							tickSubdivisions 5
+							border false;
+							edges All;
+							material "DarkGrey";
+							clickable true;
+						}
+						mmoSlider
+						{
+							id "questmarker_height";
+							dims 300 20;
+							anchorType Top;
+							anchorPos 0 330;
+							command "MessageTo Window QuestMarker height";
+							corners "TopLeft BottomRight";
+							cornerSize 4;
+							label "{questmarkers_height}";
+							minValue -1.0;
+							maxValue 3.0;
+							decimalPlaces 2;
+							initialValue 0.0;
+							increment 0.05;
+							tickInterval 1.0
+							tickSubdivisions 5
+							border false;
+							edges All;
+							material "DarkGrey";
+							clickable true;
+						}
+						mmoView
+						{
+							dims 360 50;
+							anchorPos 0 20;
+							anchorType Bottom;
+							border true;
+							edges All;
+							material "DarkGrey";
+							corners "BottomRight";
+							content
+							{
+								mmoTextEditPane
+								{
+									id "questmarker_hex";
+									dims 120 30;
+									anchorType Left;
+									anchorPos 10 0;
+									text "#FFFFFF";
+									size 20;
+									border true;
+									edges All;
+									clickable true;
+									editable true;
+									selectAllOnClick true;
+									maxLength 7;
+									command "MessageTo Window QuestMarker hex";
+								}
+								mmoButtonPane
+								{
+									id "questmarker_copy";
+									dims 32 32;
+									anchorType Right;
+									anchorPos 90 0;
+									clickable true;
+									border true;
+									edges All;
+									iconMaterial "icon-questmarker_copy";
+									tooltip "{questmarkers_copy}";
+									command "MessageTo Window QuestMarker copy";
+								}
+								mmoButtonPane
+								{
+									id "questmarker_paste";
+									dims 32 32;
+									anchorType Right;
+									anchorPos 50 0;
+									clickable true;
+									border true;
+									edges All;
+									iconMaterial "icon-questmarker_paste";
+									tooltip "{questmarkers_paste}";
+									command "MessageTo Window QuestMarker paste";
+								}
+								mmoButtonPane
+								{
+									id "questmarker_reset";
+									dims 32 32;
+									anchorType Right;
+									anchorPos 10 0;
+									clickable true;
+									border true;
+									edges All;
+									iconMaterial "icon-questmarker_reset";
+									tooltip "{questmarkers_reset}";
+									command "MessageTo Window QuestMarker reset";
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

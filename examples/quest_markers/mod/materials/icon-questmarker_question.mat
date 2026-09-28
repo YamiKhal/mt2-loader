@@ -1,0 +1,10 @@
+Material{
+	name "icon-questmarker_question"
+	mode normal
+	color 1.0 1.0 1.0 1.0
+	culling none
+	zread false
+	zwrite false
+	glow false
+	texture "questmarkers/icon_question.png" clampUV
+}

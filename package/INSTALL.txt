@@ -1,0 +1,28 @@
+MT2 Loader {version}
+Runs the native plugins of MMORPG Tycoon 2 mods. It does nothing else to the game.
+
+EASIEST
+MT2 Mod Manager installs, updates and removes it with one button.
+
+INSTALL BY HAND
+1. Close the game.
+2. Open the game folder: in Steam, right-click MMORPG Tycoon 2, then Manage > Browse local files.
+3. Copy zlib1.dll and the mt2loader folder from this zip into it. Replace zlib1.dll when Windows asks.
+4. Start the game. mt2loader\loader.log shows what the loader did.
+
+PLUGIN MODS
+Put them in the game's mod folder like any other mod:
+    %APPDATA%\VectorStorm\MMORPG Tycoon 2\<your Steam number>\mod\<the mod's folder>
+A plugin can do anything your Windows account can. Only use plugin mods from authors you trust.
+
+IF SOMETHING GOES WRONG
+- Hold Shift while the game starts: it runs once without plugins.
+- After two crashes in a row with plugins, the next launch runs without them by itself.
+- Create an empty file named "disabled" in the mt2loader folder: the game runs without the loader until you delete it.
+
+UNINSTALL
+In Steam, right-click MMORPG Tycoon 2, then Properties > Installed Files > Verify integrity of game files.
+That puts the game's own zlib1.dll back. Then delete the mt2loader folder.
+
+The loader never reads or writes save files.
+MIT license (LICENSE.txt). It contains zlib, cJSON, MinHook and the libiberty C++ demangler; their licenses are in THIRD_PARTY.txt.

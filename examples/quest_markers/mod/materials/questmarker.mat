@@ -1,0 +1,8 @@
+Material {
+	color 1.0 1.0 1.0 1.0
+	zread true
+	zwrite true
+	mode normal
+	flags 1
+	shader "questmarker_v.glsl" "tint_f.glsl"
+}

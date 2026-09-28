@@ -1,0 +1,12 @@
+{
+    "id": "weapons_any_rig",
+    "name": "Weapons on Any Rig",
+    "version": "1.0.0",
+    "author": "MT2 Tools",
+    "description": "Characters on any rig can hold weapons, as long as their costume has a hand attachment. The game normally allows weapons only on the humanoid rig.",
+    "tags": ["gameplay", "rigs"],
+    "loader": {
+        "plugins": ["native/weapons_any_rig.dll"],
+        "game_builds": ["0.30.7"]
+    }
+}

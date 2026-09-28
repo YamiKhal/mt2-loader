@@ -1,0 +1,23 @@
+[
+    {
+        "key": "counted",
+        "label": "Spending counted",
+        "type": "choice",
+        "default": "lifetime",
+        "description": "Which of a player's payments the Spenders tab adds up.",
+        "options": [
+            { "value": "lifetime", "label": "Everything (lifetime spend)" },
+            { "value": "purchases", "label": "Purchases only" },
+            { "value": "subscriptions", "label": "Subscription fees only" }
+        ]
+    },
+    {
+        "key": "minimum_spend",
+        "label": "Minimum spend",
+        "type": "int",
+        "default": 1,
+        "min": 1,
+        "max": 100000,
+        "description": "Players who have spent less than this aren't listed."
+    }
+]

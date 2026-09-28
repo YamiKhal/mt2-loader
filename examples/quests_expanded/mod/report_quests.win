@@ -1,0 +1,344 @@
+mmoWindow
+{
+	id "report_quests";
+	dims 800 600;
+	anchorPos 0 0;
+	anchorType Window;
+	clickable false;
+	hasTitlebar true;
+	title "{quests_expanded_report_title}";
+	corners "BottomRight"
+	content
+	{
+		mmoView
+		{
+			dims 200 560;
+			anchorType TopLeft;
+			anchorPos 20 20;
+			border true;
+			edges All;
+			material "DarkGrey";
+			content
+			{
+				mmoTextPane
+				{
+					dims 180 24;
+					anchorType TopLeft;
+					anchorPos 10 8;
+					text "{quests_expanded_heading_lines}";
+					size 18;
+					justify left;
+				}
+				mmoScrollContainer
+				{
+					dims 200 512;
+					anchorType TopLeft;
+					anchorPos 0 40;
+					clickable false;
+					border false;
+					content
+					{
+						mmoScrollView
+						{
+							dims 180 512;
+							clickable false;
+							content
+							{
+								mmoGridTextView
+								{
+									id quests_expanded_lines;
+									dims 180 512;
+									anchorPos 0 0;
+									anchorType TopLeft;
+									textJustification "bottomleft";
+									dimX 1;
+									dimY 2000;
+									clickable true;
+									command "MessageTo Window QuestsExpanded select_line";
+									fieldWidth {
+										180.0;
+									};
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		mmoView
+		{
+			dims 540 146;
+			anchorType TopLeft;
+			anchorPos 240 20;
+			border true;
+			edges All;
+			material "DarkGrey";
+			content
+			{
+				mmoTextEditPane
+				{
+					id "quests_expanded_line_name";
+					dims 520 36;
+					anchorType Top;
+					anchorPos 0 4;
+					justify center;
+					size 24;
+					border false;
+					clickable true;
+					editable true;
+					maxLength 32;
+					tooltip "{quests_expanded_line_title}";
+					command "MessageTo Window QuestsExpanded rename_line";
+				}
+				mmoPropertyPane
+				{
+					id "quests_expanded_kind";
+					dims 250 20;
+					anchorType TopLeft;
+					anchorPos 10 50;
+					label "{quests_expanded_label_kind}";
+					labelPlacement 0.75;
+					value "-";
+					valueColor 0.756863 0.466667 0.086275 1.0
+					size 16;
+					justify left;
+				}
+				mmoPropertyPane
+				{
+					id "quests_expanded_chapter_count";
+					dims 250 20;
+					anchorType TopLeft;
+					anchorPos 10 72;
+					label "{quests_expanded_label_chapters}";
+					labelPlacement 0.75;
+					value "-";
+					valueColor 0.756863 0.466667 0.086275 1.0
+					size 16;
+					justify left;
+				}
+				mmoPropertyPane
+				{
+					id "quests_expanded_quest_count";
+					dims 250 20;
+					anchorType TopLeft;
+					anchorPos 10 94;
+					label "{quests_expanded_label_quests}";
+					labelPlacement 0.75;
+					value "-";
+					valueColor 0.756863 0.466667 0.086275 1.0
+					size 16;
+					justify left;
+				}
+				mmoPropertyPane
+				{
+					id "quests_expanded_average_score";
+					dims 250 20;
+					anchorType TopLeft;
+					anchorPos 10 116;
+					label "{quests_expanded_label_average_score}";
+					labelPlacement 0.75;
+					value "-";
+					valueColor 0.756863 0.466667 0.086275 1.0
+					size 16;
+					justify left;
+				}
+				mmoPropertyPane
+				{
+					id "quests_expanded_in_progress";
+					dims 250 20;
+					anchorType TopRight;
+					anchorPos 10 50;
+					label "{quests_expanded_label_in_progress}";
+					labelPlacement 0.75;
+					value "-";
+					valueColor 0.756863 0.466667 0.086275 1.0
+					size 16;
+					justify left;
+				}
+				mmoPropertyPane
+				{
+					id "quests_expanded_started";
+					dims 250 20;
+					anchorType TopRight;
+					anchorPos 10 72;
+					label "{quests_expanded_label_started}";
+					labelPlacement 0.75;
+					value "-";
+					valueColor 0.756863 0.466667 0.086275 1.0
+					size 16;
+					justify left;
+				}
+				mmoPropertyPane
+				{
+					id "quests_expanded_finished";
+					dims 250 20;
+					anchorType TopRight;
+					anchorPos 10 94;
+					label "{quests_expanded_label_finished}";
+					labelPlacement 0.75;
+					value "-";
+					valueColor 0.756863 0.466667 0.086275 1.0
+					size 16;
+					justify left;
+				}
+				mmoPropertyPane
+				{
+					id "quests_expanded_finish_rate";
+					dims 250 20;
+					anchorType TopRight;
+					anchorPos 10 116;
+					label "{quests_expanded_label_finish_rate}";
+					labelPlacement 0.75;
+					value "-";
+					valueColor 0.756863 0.466667 0.086275 1.0
+					size 16;
+					justify left;
+				}
+			}
+		}
+		mmoView
+		{
+			dims 540 170;
+			anchorType TopLeft;
+			anchorPos 240 178;
+			border true;
+			edges All;
+			material "DarkGrey";
+			content
+			{
+				mmoTextPane
+				{
+					dims 200 24;
+					anchorType TopLeft;
+					anchorPos 10 8;
+					text "{quests_expanded_heading_chapters}";
+					size 18;
+					justify left;
+				}
+				mmoScrollContainer
+				{
+					dims 540 130;
+					anchorType TopLeft;
+					anchorPos 0 36;
+					clickable false;
+					border false;
+					content
+					{
+						mmoScrollView
+						{
+							dims 520 130;
+							clickable false;
+							content
+							{
+								mmoGridTextView
+								{
+									id quests_expanded_chapters;
+									dims 520 130;
+									anchorPos 0 0;
+									anchorType TopLeft;
+									textJustification "bottomleft";
+									dimX 4;
+									dimY 2000;
+									clickable true;
+									command "MessageTo Window QuestsExpanded select_chapter";
+									fieldWidth {
+										170.0;
+										130.0;
+										110.0;
+										110.0;
+									};
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		mmoView
+		{
+			dims 540 220;
+			anchorType TopLeft;
+			anchorPos 240 360;
+			border true;
+			edges All;
+			material "DarkGrey";
+			content
+			{
+				mmoTextPane
+				{
+					dims 80 24;
+					anchorType TopLeft;
+					anchorPos 10 8;
+					text "{quests_expanded_heading_quests}";
+					size 18;
+					justify left;
+				}
+				mmoTextEditPane
+				{
+					id "quests_expanded_chapter_name";
+					dims 380 28;
+					anchorType TopLeft;
+					anchorPos 90 6;
+					justify left;
+					size 18;
+					border false;
+					clickable true;
+					editable true;
+					maxLength 32;
+					tooltip "{quests_expanded_chapter_name}";
+					command "MessageTo Window QuestsExpanded rename_chapter";
+				}
+				mmoButtonPane
+				{
+					id "quests_expanded_buzz";
+					dims 28 28;
+					anchorType TopRight;
+					anchorPos 10 6;
+					text "!";
+					textSize 18;
+					clickable true;
+					border true;
+					edges All;
+					tooltip "{quests_expanded_buzz_great}";
+				}
+				mmoScrollContainer
+				{
+					dims 540 176;
+					anchorType TopLeft;
+					anchorPos 0 40;
+					clickable false;
+					border false;
+					content
+					{
+						mmoScrollView
+						{
+							dims 520 176;
+							clickable false;
+							content
+							{
+								mmoGridTextView
+								{
+									id quests_expanded_quests;
+									dims 520 176;
+									anchorPos 0 0;
+									anchorType TopLeft;
+									textJustification "bottomleft";
+									dimX 5;
+									dimY 2000;
+									clickable false;
+									fieldWidth {
+										28.0;
+										235.0;
+										132.0;
+										75.0;
+										50.0;
+									};
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

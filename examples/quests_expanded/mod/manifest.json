@@ -1,0 +1,19 @@
+{
+    "id": "quests_expanded",
+    "name": "Quests Expanded",
+    "version": "1.0.0",
+    "author": "MT2 Tools",
+    "description": "Overhauls quests. Quest givers hand players on to each other across regions, forming named questlines with chapters; a main questline players of any level follow; a Quests report with each line's players, chapters and quests. Chapters are rated: great ones cheer players up, poor ones let them down, and players ask releases for new story chapters, more so the more of them love story.",
+    "tags": [
+        "quests",
+        "npcs"
+    ],
+    "loader": {
+        "plugins": [
+            "native/quests_expanded.dll"
+        ],
+        "game_builds": [
+            "0.30.7"
+        ]
+    }
+}
