@@ -212,6 +212,21 @@ static void check_reflection() {
             .find("not an object kept inside another") != std::string::npos);
         check("singleton missing", error_of([] { game::singleton("FakeNothing"); }).find("keeps no single FakeNothing") != std::string::npos);
 
+        game::Objects& helpers = game::field<game::Objects>(manager, "FakeSubscriberManager::helper");
+
+        for (int added = 0; added < 5; added++) {
+            helpers.add(added % 2 == 0 ? first : subscribers[1]);
+        }
+
+        check("list add", helpers.size() == 5 && helpers[0] == first && helpers[3] == subscribers[1] && helpers[4] == first);
+        helpers.reserve(16);
+        check("list reserve keeps what's in it", helpers.size() == 5 && helpers[4] == first);
+
+        void* thing = game::load("fake/things.txt");
+        check("load from a data file", thing != nullptr && game::field<int>(thing, 8) == 42);
+        check("load a missing file", game::load("fake/nothing.txt") == nullptr);
+        game::destroy(thing);
+
         game::field<game::String>(toon, "FakeToon::name") = "Renamed by a plugin, with a long name";
 
         void* board = game::create("FakeBoard");

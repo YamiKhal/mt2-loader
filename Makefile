@@ -15,6 +15,9 @@ HEADERS = $(wildcard src/*/*.h) sdk/include/mt2loader.h sdk/include/mt2loader.hp
 CJSON = $(BUILD)/libcjson_private.a
 
 SDK_TOOL_SOURCES = $(wildcard tools/mt2sdk/*.c) src/core/symbols.c src/core/game_build.c src/core/manifest.c src/common/pe_image.c
+# Zydis is compiled once on its own: it's one big generated file, and its code isn't held to this project's warnings.
+ZYDIS = $(BUILD)/zydis.o
+ZYDIS_FLAGS = -DZYDIS_STATIC_BUILD -DZYCORE_STATIC_BUILD
 
 PROXY = $(DIST)/zlib1.dll
 CORE = $(DIST)/mt2loader/mt2loader.dll
@@ -48,10 +51,17 @@ sdk: $(SDK_TOOL)
 	rm -rf $(SDK)/template
 	cp -r sdk/template $(SDK)/template
 	rm -rf $(SDK)/template/mod/native $(SDK)/template/build
+	rm -rf $(SDK)/ghidra
+	@mkdir -p $(SDK)/ghidra
+	cp tools/ghidra/*.java $(SDK)/ghidra/
 
-$(SDK_TOOL): $(SDK_TOOL_SOURCES) $(HEADERS) $(wildcard tools/mt2sdk/*.h) $(CJSON)
+$(ZYDIS): third_party/zydis/Zydis.c third_party/zydis/Zydis.h
+	@mkdir -p $(BUILD)
+	$(CC) -std=c11 -O2 -w $(ZYDIS_FLAGS) -Ithird_party/zydis -c $< -o $@
+
+$(SDK_TOOL): $(SDK_TOOL_SOURCES) $(HEADERS) $(wildcard tools/mt2sdk/*.h) $(CJSON) $(ZYDIS)
 	@mkdir -p $(SDK)
-	$(CC) $(CFLAGS) -municode $(SDK_TOOL_SOURCES) -static-libgcc -s $(CJSON) -l:libiberty.a -o $@
+	$(CC) $(CFLAGS) $(ZYDIS_FLAGS) -municode $(SDK_TOOL_SOURCES) $(ZYDIS) -static-libgcc -s $(CJSON) -l:libiberty.a -o $@
 
 test: all
 	bash tests/run_tests.sh

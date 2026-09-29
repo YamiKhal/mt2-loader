@@ -28,6 +28,7 @@ quests_expanded_quest_type "Quest type. A Tour sends players to several targets;
 quests_expanded_type_standard "Standard"
 quests_expanded_type_tour "Tour"
 quests_expanded_type_branch "Branch"
+quests_expanded_action_clear_dungeon "clear the dungeon"
 quests_expanded_heading_targets "Targets:"
 quests_expanded_targets_hint "A tour's players do every target, the nearest first, and a party does them together. A branch hands each player on to one of its quest givers, picked by what draws them. Add targets with Change target on the quest card"
 quests_expanded_remove_target "Take this target out of the tour"

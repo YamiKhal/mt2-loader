@@ -1,0 +1,10 @@
+mmoCursorBehaviourGizmo
+{
+	name "@Captives"
+	key "item_captives"
+	displayName "Place Captive"
+	iconName "icon-quest_giver"
+	typeNames "dungeon_captives_captive"
+	megaTooltipImageName "megatooltip/questgiver.png"
+	worksOutsideActiveArea false
+}

@@ -1,0 +1,1 @@
+Zydis 4.1.1 with Zycore 1.5.2, amalgamated with zydis/assets/amalgamate.py (https://github.com/zyantific/zydis). Used by mt2sdk only, not by the loader.

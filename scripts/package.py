@@ -18,9 +18,11 @@ MSYS_LICENSES = {"zlib": "zlib", "cJSON": "cjson"}
 LOCAL_LICENSES = {
     "MinHook": ROOT / "third_party" / "minhook" / "LICENSE.txt",
     "libiberty C++ demangler (cp-demangle.c)": ROOT / "third_party" / "libiberty" / "cp-demangle-LICENSE.txt",
+    "Zydis": ROOT / "third_party" / "zydis" / "LICENSE.txt",
+    "Zycore": ROOT / "third_party" / "zydis" / "Zycore-LICENSE.txt",
 }
 LOADER_THIRD_PARTY = ["zlib", "cJSON", "MinHook", "libiberty C++ demangler (cp-demangle.c)"]
-SDK_THIRD_PARTY = ["cJSON", "libiberty C++ demangler (cp-demangle.c)"]
+SDK_THIRD_PARTY = ["cJSON", "libiberty C++ demangler (cp-demangle.c)", "Zydis", "Zycore"]
 SKIPPED_IN_EXAMPLES = {"build", "out", ".vs"}
 
 
@@ -108,11 +110,12 @@ def write_sdk_zip(version: str, prefix: Path) -> Path:
     root = f"MT2LoaderSDK-{version}"
     package = DIST / f"{root}.zip"
 
-    require([sdk / "mt2sdk.exe", *headers, sdk / "template", MODDING_GUIDE])
+    require([sdk / "mt2sdk.exe", *headers, sdk / "template", sdk / "ghidra", MODDING_GUIDE])
 
     with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.write(sdk / "mt2sdk.exe", f"{root}/mt2sdk.exe")
         add_folder(archive, sdk / "template", f"{root}/template")
+        add_folder(archive, sdk / "ghidra", f"{root}/ghidra")
 
         for header in headers:
             archive.write(header, f"{root}/include/{header.name}")

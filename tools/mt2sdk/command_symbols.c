@@ -9,29 +9,10 @@
 #include "commands.h"
 #include "cpp_declaration.h"
 #include "game_exe.h"
+#include "game_image.h"
 
-// Where MT2.exe asks to be loaded. Disassemblers (Ghidra, IDA, x64dbg before it starts) show addresses from here.
-#define PREFERRED_BASE 0x140000000ull
 #define MAX_SHOWN 300
 
-
-static bool load_game_symbols(const wchar_t* given, wchar_t* path) {
-    char problem[200];
-
-    if (!game_exe_find(given, path)) {
-        return false;
-    }
-
-    if (!symbols_load(path, problem, sizeof problem)) {
-        fprintf(stderr, "%s\n", problem);
-
-        return false;
-    }
-
-    symbols_prepare_readable_names();
-
-    return true;
-}
 
 static void to_lower(char* text) {
     for (; *text != '\0'; text++) {
@@ -58,7 +39,7 @@ int command_find(const wchar_t* exe, int term_count, wchar_t** terms, int raw, i
     wchar_t path[GAME_PATH_CAPACITY];
     char lowered_terms[16][256];
 
-    if (term_count > 16 || !load_game_symbols(exe, path)) {
+    if (term_count > 16 || !game_exe_load_symbols(exe, path)) {
         return 1;
     }
 
@@ -119,7 +100,7 @@ int command_find(const wchar_t* exe, int term_count, wchar_t** terms, int raw, i
 int command_symbols(const wchar_t* exe, const wchar_t* output) {
     wchar_t path[GAME_PATH_CAPACITY];
 
-    if (!load_game_symbols(exe, path)) {
+    if (!game_exe_load_symbols(exe, path)) {
         return 1;
     }
 

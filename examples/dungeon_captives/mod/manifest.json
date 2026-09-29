@@ -1,0 +1,12 @@
+{
+    "id": "dungeon_captives",
+    "name": "Dungeon Captives",
+    "version": "1.0.0",
+    "author": "MT2 Tools",
+    "description": "Place captives in dungeons for parties to free: a dungeon isn't cleared until every captive in it is. A captive is any of your characters (NPCs, classes, monsters and their variants), picked in the character window, in a pose of your choice.",
+    "tags": ["dungeons", "npcs"],
+    "loader": {
+        "plugins": ["native/dungeon_captives.dll"],
+        "game_builds": ["0.30.7"]
+    }
+}

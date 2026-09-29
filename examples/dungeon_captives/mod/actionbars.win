@@ -1,0 +1,20 @@
+mmoActionBar
+{
+	id "Dungeon_Edit";
+	actionBarContent
+	{
+		mmoActionBarContent
+		{
+			id "Layout";
+			configuration
+			{
+				mmoActionBarButtonConfiguration
+				{
+					slot 8;
+					itemName "@Captives";
+					tooltip "Captives"
+				}
+			}
+		}
+	}
+}

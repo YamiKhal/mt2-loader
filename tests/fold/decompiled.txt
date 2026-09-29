@@ -1,0 +1,116 @@
+{
+  uint64_t *puVar1;
+  uint64_t *puVar2;
+  uint32_t uVar3;
+  unsigned int uVar4;
+  vsScene *scene;
+  void *pvVar6;
+  uint64_t uVar7;
+  long long lVar8;
+  vsModelInstance *modelInstance;
+  uint64_t *puVar11;
+  unsigned long long uVar12;
+  void *pvVar13;
+  uint64_t uVar14;
+  vsMatrix4x4 *matrix4x4;
+  long long lVar16;
+  int iVar17;
+  long long lVar18;
+  vsMatrix4x4 *matrix4x42;
+  vsVector3D local_298;
+  uint64_t local_228;
+  uint32_t uStack_220;
+  uint64_t local_218;
+  code *local_210;
+  vsVector3D *local_200;
+  vsTransform3D local_1e8 [3];
+
+  if (this->m_scene == (vsScene *)0x0) {
+    vsFailedAssert("m_scene","Trying to build a mmoBlueprint as a group without a scene being set",
+                   "../code/Games/MMORPG/MapObjects/MMO_Blueprint.cpp",0x28d);
+  }
+  lVar18 = 0;
+  lVar8 = (long long)__dynamic_cast(lVar8,&mmoProp::typeinfo,&mmoScenery::typeinfo,0);
+        pvVar6 = __dynamic_cast(*(void **)(local_280 + lVar18 * 8),&mmoProp::typeinfo,
+                                &mmoScenery::typeinfo,0);
+          if (modelInstance == (vsModelInstance *)0x0) {
+            local_298.x = *(float *)(lVar8 + 0x26c);
+            uVar14 = mmoScenery::GetTypeName(*(uint32_t *)(lVar8 + 0x268));
+            std::ostringstream::ostringstream((ostringstream *)local_1e8);
+            local_228 = (FormatArg *)&local_218;
+            local_200 = &local_298;
+            uStack_220 = 2;
+            local_210 = tinyformat::detail::FormatArg::formatImpl<std::string>;
+            local_218 = uVar14;
+            tinyformat::detail::formatImpl
+                      ((ostream *)local_1e8,
+                       "Scenery object \'%s:%d\' has no renderable instance model??",local_228,2);
+            std::stringbuf::str();
+            std::ostringstream::~ostringstream((ostringstream *)local_1e8);
+            vsLog_("../code/Games/MMORPG/MapObjects/MMO_Blueprint.cpp",0x2b1,(std::string *)local_248);
+            std::string::_M_dispose((std::string *)local_248);
+            iVar17 = local_278;
+          }
+          else {
+            puVar11 = (uint64_t *)mmoGroup::GetPropLocalTransform(group,(int)lVar18);
+            local_1e8[0].m_quaternion._0_8_ = *puVar11;
+            local_1e8[0].m_quaternion._8_8_ = puVar11[1];
+            local_1e8[0].m_translation._0_8_ = puVar11[2];
+            local_1e8[0]._24_8_ = puVar11[3];
+            local_1e8[0].m_scale._4_8_ = puVar11[4];
+            local_1e8[0]._40_8_ = puVar11[5];
+            local_1e8[0].m_matrix.w.y =
+                 (float)((unsigned long long)*(uint64_t *)((long long)puVar11 + 0x5c) >> 0x20);
+            lVar8 = vsModelInstance::GetModel(modelInstance);
+            iVar17 = (this->modelInstances).count;
+            uVar12 = (unsigned long long)iVar17;
+            if (iVar17 < (this->modelInstances).capacity) {
+LAB_1403ff580:
+              pvVar13 = (this->modelInstances).items;
+            }
+            else {
+              iVar17 = iVar17 * 2;
+              if (iVar17 < 4) {
+                iVar17 = 4;
+              }
+              if (iVar17 <= (this->modelInstances).capacity) goto LAB_1403ff580;
+              pvVar13 = operator_new__((long long)iVar17 << 3);
+              uVar4 = (this->modelInstances).count;
+LAB_1403ff350:
+                operator_delete__(pvVar6);
+              (this->modelInstances).items = pvVar13;
+              (this->modelInstances).capacity = iVar17;
+            }
+            (this->modelInstances).count = (int)uVar12 + 1;
+            *(vsModelInstance **)((long long)pvVar13 + uVar12 * 8) = modelInstance;
+            puVar11 = (uint64_t *)vsTransform3D::GetMatrix(local_1e8);
+            iVar17 = (this->matrix4x4s).count;
+            lVar16 = (long long)iVar17;
+            iVar3 = (this->matrix4x4s).capacity;
+            if (iVar17 < iVar3) {
+              matrix4x4 = (vsMatrix4x4 *)(this->matrix4x4s).items;
+            }
+            else {
+              matrix4x4 = operator_new__((long long)iVar17 << 6);
+              (this->matrix4x4s).items = (uint8_t *)matrix4x4;
+            }
+            uVar14 = *puVar11;
+            uVar7 = puVar11[1];
+            matrix4x4 = matrix4x4 + lVar16;
+            (this->matrix4x4s).count = (int)lVar16 + 1;
+            (matrix4x4->x).x = (float)(int)uVar14;
+            (matrix4x4->x).y = (float)(int)((unsigned long long)uVar14 >> 0x20);
+            (matrix4x4->x).z = (float)(int)uVar7;
+            (matrix4x4->x).w = (float)(int)((unsigned long long)uVar7 >> 0x20);
+            uVar14 = puVar11[2];
+            uVar7 = puVar11[3];
+            (matrix4x4->y).x = (float)(int)uVar14;
+            (matrix4x4->y).y = (float)(int)((unsigned long long)uVar14 >> 0x20);
+            iVar17 = local_278;
+          }
+  local_288._0_8_ = &PTR__vsArray_141749190;
+  if (local_288.items != (uint8_t *)0x0) {
+    operator_delete__(local_288.items);
+  }
+  return;
+}

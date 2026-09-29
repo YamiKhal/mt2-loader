@@ -32,6 +32,8 @@ struct Layout {
     std::ptrdiff_t arrow_to = 0;
     std::ptrdiff_t pool_count = 0;
     std::ptrdiff_t object_uid = 0;
+    std::ptrdiff_t building_dungeon = 0;
+    std::ptrdiff_t run_dungeon = 0;
 };
 
 extern Layout layout;

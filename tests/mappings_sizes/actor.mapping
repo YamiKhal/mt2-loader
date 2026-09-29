@@ -1,0 +1,2 @@
+class mmoActor
+    method mmoActor(std::string const&)

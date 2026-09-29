@@ -1435,7 +1435,7 @@ inline Patch patch(Address where, std::initializer_list<std::uint8_t> bytes) {
 }
 
 // A field of a game object, offset bytes into it, to read or change in place:
-//     int& variant = game::field<int>(character, 0x4b0);
+//     void*& actor = game::field<void*>(character, 0x6f0);
 // The offsets known so far are in LOADER.md §2.3. A wrong offset or object crashes, as it would in the game.
 template<class T>
 T& field(void* object, std::size_t offset) {
@@ -2545,6 +2545,9 @@ Hook hook(Address function, Detour detour) {
     A list of game objects that a game object keeps (the engine's object arrays), seen in place:
 
         for (void* subscriber : game::field<game::Objects>(manager, "mmoSubscriberManager::subscriber")) { ... }
+
+    add() appends one, as the game does: a list that owns its objects (a vsArrayStore) deletes it with the rest.
+    reserve() makes room first, for a list other threads may be reading.
 */
 class Objects {
 public:
@@ -2575,13 +2578,46 @@ public:
         return items[index];
     }
 
+    // Room grows as the game grows it (twice as much, at least 4), on the game's heap.
+    void add(void* object) {
+        if (count >= capacity) {
+            grow(std::max(capacity * 2, 4));
+        }
+
+        items[count++] = object;
+    }
+
+    // Room for this many, so adding up to that never moves the list: code on another thread reading it meanwhile
+    // (the game loading on its workers) never sees it moved.
+    void reserve(std::size_t room) {
+        if (room > static_cast<std::size_t>(capacity)) {
+            grow(static_cast<std::int32_t>(room));
+        }
+    }
+
 private:
     Objects() = default;
 
-    // As the engine lays out vsArrayStore: its class, the objects, how many.
+    void grow(std::int32_t room) {
+        static Function<void**(std::size_t size)> allocate{ "_Znay" };
+        static Function<void(void** items)> free{ "_ZdaPv" };
+
+        void** grown = allocate(static_cast<std::size_t>(room) * sizeof(void*));
+        std::copy(items, items + size(), grown);
+
+        if (items != nullptr) {
+            free(items);
+        }
+
+        items = grown;
+        capacity = room;
+    }
+
+    // As the engine lays out vsArrayStore: its class, the objects, how many, and room for how many.
     void* array_class = nullptr;
     void** items = nullptr;
     std::int32_t count = 0;
+    std::int32_t capacity = 0;
 };
 
 /*
@@ -2978,6 +3014,60 @@ inline void* create(std::string_view class_name) {
     if (object == nullptr) {
         plugin::fail("The game made no {}", class_name);
     }
+
+    return object;
+}
+
+// A game object from a data file, the game's or a mod's, made as the game makes the ones it loads
+// (vsObjectList::LoadFromFilename): the first object the file describes, or nullptr if there's no such file or object.
+//     void* variant = game::load("gizmo/captive/base.variant");
+// It's on the game's heap: hand it to the game (game::Objects::add), or delete it with game::destroy.
+inline void* load(std::string_view path) {
+    static Function<bool(const String& path)> exists{ "vsFile::Exists" };
+    static Function<void(void* file, const String& path, int mode)> open{ "_ZN6vsFileC1ERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEENS_4ModeE" };
+    static Function<void(void* file)> close{ "_ZN6vsFileD1Ev" };
+    static Function<bool(void* file, void* record)> read{ "vsFile::Record" };
+    static Function<void(void* record)> start_record{ "_ZN8vsRecordC1Ev" };
+    static Function<void(void* record)> end_record{ "_ZN8vsRecordD1Ev" };
+    static Function<void(void* context)> start_context{ "_ZN15vsObjectContextC1Ev" };
+    static Function<void(void* context)> end_context{ "_ZN15vsObjectContextD1Ev" };
+    static Function<const String&(const void* token)> label_of{ "vsToken::AsString" };
+    static Function<void*(const String& name)> find_class{ "vsRTTI::Find" };
+    // The class's factory makes one, and the object reads itself from the record: the game's own virtual calls.
+    constexpr std::ptrdiff_t create_slot = 0x10;
+    constexpr std::ptrdiff_t load_from_record_slot = 0x70;
+    // Room for each, larger than the game's (0x90, 0x80 and 8 bytes on its stack).
+    constexpr std::size_t room = 0x200;
+    constexpr int read_mode = 0;
+
+    String name(path);
+
+    if (!exists(name)) {
+        return nullptr;
+    }
+
+    alignas(16) std::array<std::byte, room> file{};
+    alignas(16) std::array<std::byte, room> record{};
+    alignas(16) std::array<std::byte, room> context{};
+    open(file.data(), name, read_mode);
+    start_record(record.data());
+    start_context(context.data());
+    void* object = nullptr;
+
+    while (object == nullptr && read(file.data(), record.data())) {
+        void* type = find_class(label_of(record.data()));
+        void* create = type != nullptr ? (Address(*static_cast<void**>(type)) + create_slot).read<void*>() : nullptr;
+        object = create != nullptr ? plugin::detail::call<void*, void*>(create, type) : nullptr;
+
+        if (object != nullptr) {
+            void* load_from_record = (Address(*static_cast<void**>(object)) + load_from_record_slot).read<void*>();
+            plugin::detail::call<void, void*, void*, void*>(load_from_record, object, record.data(), context.data());
+        }
+    }
+
+    end_context(context.data());
+    end_record(record.data());
+    close(file.data());
 
     return object;
 }

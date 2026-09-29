@@ -1,0 +1,12 @@
+mmoGizmoVariant
+{
+	name "base";
+	modelFile "gizmo/container/barrel.vmb";
+	animationFile "gizmo/container/barrel";
+	pad
+	{
+	}
+	path
+	{
+	}
+}

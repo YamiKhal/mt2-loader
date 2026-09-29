@@ -1,0 +1,9 @@
+mmoGizmoDefinition
+{
+	name "dungeon_captives_captive"
+	cost 100;
+	infoWindow "info_gizmo"
+
+	features collectable;
+	variantDirectory "gizmo/dungeon_captives_captive";
+}

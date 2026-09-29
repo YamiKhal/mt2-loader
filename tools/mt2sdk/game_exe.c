@@ -5,6 +5,9 @@
 #include <string.h>
 #include <windows.h>
 
+#include "../../src/core/game_build.h"
+#include "../../src/core/symbols.h"
+
 #define GAME_IN_LIBRARY L"\\steamapps\\common\\MMORPG Tycoon 2\\MT2.exe"
 
 
@@ -101,4 +104,38 @@ bool game_exe_find(const wchar_t* given, wchar_t* path) {
     fwprintf(stderr, L"MT2.exe wasn't found in the Steam libraries. Give it with --exe \"<path to MT2.exe>\", or set MT2_EXE\n");
 
     return false;
+}
+
+void game_exe_build_name(const wchar_t* path, char* name, size_t capacity) {
+    HMODULE module = LoadLibraryExW(path, NULL, DONT_RESOLVE_DLL_REFERENCES);
+    GameBuild build = { 0 };
+
+    if (module != NULL) {
+        build = game_build_identify(module);
+        FreeLibrary(module);
+    }
+
+    if (game_build_is_known(&build)) {
+        snprintf(name, capacity, "%s", build.name);
+    } else {
+        snprintf(name, capacity, "unknown-%08x", build.link_timestamp);
+    }
+}
+
+bool game_exe_load_symbols(const wchar_t* given, wchar_t* path) {
+    char problem[200];
+
+    if (!game_exe_find(given, path)) {
+        return false;
+    }
+
+    if (!symbols_load(path, problem, sizeof problem)) {
+        fprintf(stderr, "%s\n", problem);
+
+        return false;
+    }
+
+    symbols_prepare_readable_names();
+
+    return true;
 }

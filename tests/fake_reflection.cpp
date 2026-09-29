@@ -61,6 +61,7 @@ public:
 
     T** items = nullptr;
     int count = 0;
+    int capacity = 0;
 };
 
 // As the engine lays out a weak link: its class, the id it loads by, then a weak pointer (its class, the object, and
@@ -145,8 +146,10 @@ public:
     __attribute__((noipa)) int Total() const;
 
     vsObjectArray<FakeSubscriber> subscriber;
+    vsObjectArray<FakeSubscriber> helper;
 
     static vsPropertyObject<vsObjectArray<FakeSubscriber>, FakeSubscriberManager> s_subscriberProperty;
+    static vsPropertyObject<vsObjectArray<FakeSubscriber>, FakeSubscriberManager> s_helperProperty;
 };
 
 extern "C" int fake_boards_destroyed;
@@ -175,6 +178,8 @@ vsPropertyObject<vsWeakObjectLink<FakeToon>, FakeSubscriber> FakeSubscriber::s_f
 vsPropertyObject<FakeBadge, FakeSubscriber> FakeSubscriber::s_badgeProperty{ "badge", offsetof(FakeSubscriber, badge) };
 vsPropertyObject<vsObjectArray<FakeSubscriber>, FakeSubscriberManager> FakeSubscriberManager::s_subscriberProperty{
     "subscriber", offsetof(FakeSubscriberManager, subscriber) };
+vsPropertyObject<vsObjectArray<FakeSubscriber>, FakeSubscriberManager> FakeSubscriberManager::s_helperProperty{
+    "helper", offsetof(FakeSubscriberManager, helper) };
 
 // Plugins replace it with a sum they make from the fields.
 int FakeSubscriberManager::Total() const {
@@ -352,10 +357,15 @@ extern "C" void fake_reflection_results(FILE* file) {
     second.favorite.proxy = &gone_proxy;
     manager.subscriber.items = subscribers;
     manager.subscriber.count = 2;
+    // Room for one helper, on the heap as the game keeps its lists: plugins add more.
+    manager.helper.items = new FakeSubscriber*[1];
+    manager.helper.capacity = 1;
     vsSingleton<FakeSubscriberManager>::s_instance = &manager;
 
     fprintf(file, "total=%d\n", manager.Total());
     vsSingleton<FakeSubscriberManager>::s_instance = nullptr;
+    fprintf(file, "helpers=%d of %d\n", manager.helper.count, manager.helper.capacity);
+    delete[] manager.helper.items;
 
     fprintf(file, "toon_name=%s\n", toon.name.c_str());
     fprintf(file, "boards_destroyed=%d\n", fake_boards_destroyed);

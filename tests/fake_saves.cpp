@@ -105,6 +105,7 @@ static volatile int objects_loaded = 0;
 // Objects saved with a linkId are found by it once the load has them all, as links to them resolve.
 class vsObjectContext {
 public:
+    vsObjectContext();
     ~vsObjectContext();
 
     void AddObject(int id, vsNullObject* object);
@@ -113,6 +114,8 @@ public:
     int objects = 0;
     std::map<int, vsNullObject*> by_id;
 };
+
+__attribute__((noipa)) vsObjectContext::vsObjectContext() = default;
 
 __attribute__((noipa)) vsObjectContext::~vsObjectContext() {
     objects_loaded = objects_loaded + objects;
@@ -256,7 +259,12 @@ struct FakeProperty {
 
 class vsRTTI {
 public:
-    explicit vsRTTI(std::vector<FakeProperty> list) : properties(std::move(list)) {}
+    explicit vsRTTI(std::vector<FakeProperty> list, void* (*make)() = nullptr) : properties(std::move(list)), maker(make) {}
+    virtual ~vsRTTI() = default;
+    // The class's factory, at the game's slot (0x10).
+    virtual void* Create() const;
+
+    static vsRTTI* Find(const std::string& name);
 
     int Count() const {
         return static_cast<int>(properties.size());
@@ -270,6 +278,7 @@ public:
 
 private:
     std::vector<FakeProperty> properties;
+    void* (*maker)() = nullptr;
 };
 
 __attribute__((noipa)) bool vsRTTI::SaveStream(const vsNullObject* object, vsRecordWriter* writer, vsSaveObjectContext* context) const {
@@ -639,4 +648,84 @@ extern "C" void fake_saves_results(FILE* file) {
     vsSingleton<mmoGameState>::s_instance = nullptr;
 
     save_and_load_rules(file);
+}
+
+
+// A data file read record by record (vsFile::Record), and the classes its labels name (vsRTTI::Find): each makes an
+// object that reads itself from its record, through the same virtual calls as the game's (slots 0x10 and 0x70).
+static const std::map<std::string, std::vector<std::pair<std::string, std::string>>> data_files{
+    { "fake/things.txt", { { "NoSuchClass", "1" }, { "FakeThing", "42" } } },
+};
+
+class vsFile {
+public:
+    enum Mode {
+        MODE_Read,
+    };
+
+    vsFile(const std::string& path, Mode mode);
+    ~vsFile();
+
+    static bool Exists(const std::string& path);
+    bool Record(vsRecord* record);
+
+    const std::vector<std::pair<std::string, std::string>>* records = nullptr;
+    std::size_t next = 0;
+};
+
+__attribute__((noipa)) vsFile::vsFile(const std::string& path, Mode) : records(&data_files.at(path)) {}
+
+__attribute__((noipa)) vsFile::~vsFile() {
+    records = nullptr;
+}
+
+__attribute__((noipa)) bool vsFile::Exists(const std::string& path) {
+    return data_files.count(path) > 0;
+}
+
+__attribute__((noipa)) bool vsFile::Record(vsRecord* record) {
+    if (next >= records->size()) {
+        return false;
+    }
+
+    const auto& [label, value] = (*records)[next++];
+    record->SetLabel(label);
+    record->SetTokenCount(1);
+    record->tokens[0].SetString(value);
+
+    return true;
+}
+
+class FakeThing {
+public:
+    virtual ~FakeThing() = default;
+    virtual void Unused2() {}
+    virtual void Unused3() {}
+    virtual void Unused4() {}
+    virtual void Unused5() {}
+    virtual void Unused6() {}
+    virtual void Unused7() {}
+    virtual void Unused8() {}
+    virtual void Unused9() {}
+    virtual void Unused10() {}
+    virtual void Unused11() {}
+    virtual void Unused12() {}
+    virtual void Unused13() {}
+    virtual void LoadFromRecord(vsRecord* record, vsObjectContext* context);
+
+    int value = 0;
+};
+
+__attribute__((noipa)) void FakeThing::LoadFromRecord(vsRecord* record, vsObjectContext*) {
+    value = std::stoi(record->GetToken(0).AsString());
+}
+
+__attribute__((noipa)) void* vsRTTI::Create() const {
+    return maker != nullptr ? maker() : nullptr;
+}
+
+__attribute__((noipa)) vsRTTI* vsRTTI::Find(const std::string& name) {
+    static vsRTTI thing({}, [] { return static_cast<void*>(new FakeThing()); });
+
+    return name == "FakeThing" ? &thing : nullptr;
 }

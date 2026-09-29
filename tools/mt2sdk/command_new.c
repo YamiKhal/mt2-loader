@@ -207,7 +207,122 @@ static bool copy_header(const wchar_t* sdk, const wchar_t* include_folder, const
 }
 
 
-int command_new(const wchar_t* folder, const wchar_t* name, const wchar_t* exe) {
+// projects\MyPlugin works when projects doesn't exist yet: each missing folder on the way is made.
+static void make_parent_folders(const wchar_t* folder) {
+    wchar_t path[GAME_PATH_CAPACITY];
+    swprintf(path, GAME_PATH_CAPACITY, L"%ls", folder);
+
+    for (wchar_t* at = path + 1; *at != L'\0'; at++) {
+        if ((*at == L'\\' || *at == L'/') && at[-1] != L':') {
+            wchar_t kept = *at;
+            *at = L'\0';
+            CreateDirectoryW(path, NULL);
+            *at = kept;
+        }
+    }
+}
+
+static const char* const VSCODE_LAUNCH =
+    "{\n"
+    "    \"version\": \"0.2.0\",\n"
+    "    \"configurations\": [\n"
+    "        {\n"
+    "            \"name\": \"Attach to MT2 (start the game from Steam first)\",\n"
+    "            \"type\": \"cppvsdbg\",\n"
+    "            \"request\": \"attach\",\n"
+    "            \"processId\": \"${command:pickProcess}\"\n"
+    "        },\n"
+    "        {\n"
+    "            \"name\": \"Start MT2 (needs steam_appid.txt with 486860 in the game folder)\",\n"
+    "            \"type\": \"cppvsdbg\",\n"
+    "            \"request\": \"launch\",\n"
+    "            \"program\": \"%s/MT2.exe\",\n"
+    "            \"cwd\": \"%s\"\n"
+    "        }\n"
+    "    ]\n"
+    "}\n";
+
+static const char* const VISUAL_STUDIO_LAUNCH =
+    "{\n"
+    "  \"version\": \"0.2.1\",\n"
+    "  \"defaults\": {},\n"
+    "  \"configurations\": [\n"
+    "    {\n"
+    "      \"type\": \"default\",\n"
+    "      \"project\": \"CMakeLists.txt\",\n"
+    "      \"projectTarget\": \"%s.dll\",\n"
+    "      \"name\": \"Start MT2 (needs steam_appid.txt with 486860 in the game folder)\",\n"
+    "      \"exe\": \"%s/MT2.exe\",\n"
+    "      \"currentDir\": \"%s\"\n"
+    "    }\n"
+    "  ]\n"
+    "}\n";
+
+static bool write_text(const wchar_t* folder, const wchar_t* subfolder, const wchar_t* file_name, const char* text) {
+    wchar_t path[GAME_PATH_CAPACITY];
+
+    swprintf(path, GAME_PATH_CAPACITY, L"%ls\\%ls", folder, subfolder);
+    CreateDirectoryW(path, NULL);
+    swprintf(path, GAME_PATH_CAPACITY, L"%ls\\%ls\\%ls", folder, subfolder, file_name);
+
+    FILE* file = _wfopen(path, L"wb");
+    bool written = file != NULL && fputs(text, file) >= 0;
+
+    if (file != NULL) {
+        fclose(file);
+    }
+
+    return written;
+}
+
+// Debugging from VS Code or Visual Studio. The game asks Steam to restart it when it's started any other way (unless
+// steam_appid.txt is next to it), which loses the debugger: attaching to the running game always works.
+static void write_debug_settings(const wchar_t* folder, const wchar_t* exe, const char* id) {
+    wchar_t path[GAME_PATH_CAPACITY];
+    char game_folder[GAME_PATH_CAPACITY];
+    char text[4096];
+
+    if (!game_exe_find(exe, path)) {
+        return;
+    }
+
+    WideCharToMultiByte(CP_UTF8, 0, path, -1, game_folder, sizeof game_folder, NULL, NULL);
+
+    for (char* character = game_folder; *character != '\0'; character++) {
+        *character = *character == '\\' ? '/' : *character;
+    }
+
+    char* last_slash = strrchr(game_folder, '/');
+
+    if (last_slash != NULL) {
+        *last_slash = '\0';
+    }
+
+    snprintf(text, sizeof text, VSCODE_LAUNCH, game_folder, game_folder);
+    write_text(folder, L".vscode", L"launch.json", text);
+    snprintf(text, sizeof text, VISUAL_STUDIO_LAUNCH, id, game_folder, game_folder);
+    write_text(folder, L".vs", L"launch.vs.json", text);
+}
+
+// The game's classes as C++ (mt2game.hpp), when the game is there to read them from. A project works without it.
+static void write_game_classes(const wchar_t* exe, const wchar_t* include_folder, const wchar_t* mappings_folder) {
+    wchar_t path[GAME_PATH_CAPACITY];
+    wchar_t header[GAME_PATH_CAPACITY];
+
+    if (!game_exe_find(exe, path)) {
+        return;
+    }
+
+    swprintf(header, GAME_PATH_CAPACITY, L"%ls\\mt2game.hpp", include_folder);
+    printf("  ");
+    fflush(stdout);
+
+    if (command_headers(path, header, mappings_folder) != 0) {
+        printf("  include\\mt2game.hpp wasn't made: make it later with mt2sdk headers include\\mt2game.hpp\n");
+    }
+}
+
+int command_new(const wchar_t* folder, const wchar_t* name, const wchar_t* exe, const wchar_t* mappings_folder) {
     wchar_t sdk[GAME_PATH_CAPACITY];
     wchar_t template_folder[GAME_PATH_CAPACITY];
     wchar_t include_folder[GAME_PATH_CAPACITY];
@@ -237,6 +352,7 @@ int command_new(const wchar_t* folder, const wchar_t* name, const wchar_t* exe) 
         return 1;
     }
 
+    make_parent_folders(folder);
     project.build = current_build(exe);
 
     swprintf(include_folder, GAME_PATH_CAPACITY, L"%ls\\include", folder);
@@ -255,6 +371,8 @@ int command_new(const wchar_t* folder, const wchar_t* name, const wchar_t* exe) 
 
     wprintf(L"Made %ls\n", folder);
     printf("  mod id %s, name \"%s\", game build %s\n", project.id, project.name, project.build);
+    write_debug_settings(folder, exe, project.id);
+    write_game_classes(exe, include_folder, mappings_folder);
     printf("  Open the folder in Visual Studio (File > Open > Folder) and build, or: cmake -B build && cmake --build build\n");
     printf("  Each build puts the DLL in mod\\native and copies mod\\ into the game's mod folder\n");
 

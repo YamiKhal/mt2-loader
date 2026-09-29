@@ -150,6 +150,18 @@ static void find_object_uid() {
     layout.object_uid = read_offset8(uid + 3);
 }
 
+// mov rdx, rbx; mov rcx, rsi; mov [rbx + dungeon], rsi; add rsp, 0x28: a dungeon entrance keeping its dungeon.
+static void find_building_dungeon() {
+    game::Address dungeon = game::find("mmoBuilding::SetDungeon").scan("48 89 DA 48 89 F1 48 89 B3 ?? ?? ?? ?? 48 83 C4 28");
+    layout.building_dungeon = read_offset32(dungeon + 9);
+}
+
+// mov rcx, [rcx + dungeon]; jmp: a dungeon run telling its dungeon it was completed.
+static void find_run_dungeon() {
+    game::Address complete = game::find("mmoDungeonInstance::NotifyCompletion");
+    layout.run_dungeon = read_offset8(complete.scan("48 8B 49 ?? E9") + 3);
+}
+
 void read_layout() {
     find_pane_visibility();
     find_button_tooltip();
@@ -168,6 +180,8 @@ void read_layout() {
     find_arrow_fields();
     find_pool_count();
     find_object_uid();
+    find_building_dungeon();
+    find_run_dungeon();
 }
 
 void* weak_object(const void* owner, std::ptrdiff_t pointer_at) {

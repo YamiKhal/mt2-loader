@@ -47,6 +47,7 @@ build_plugins() {
     g++ $CXXFLAGS -Isdk/include -shared $CXX_STATIC -s examples/top_spenders/src/plugin.cpp -o "$BUILD/bin/top_spenders.dll" || exit 1
     g++ $CXXFLAGS -Isdk/include -shared $CXX_STATIC -s examples/quest_markers/src/plugin.cpp -o "$BUILD/bin/quest_markers.dll" || exit 1
     g++ $CXXFLAGS -Isdk/include -shared $CXX_STATIC -s examples/quests_expanded/src/*.cpp -o "$BUILD/bin/quests_expanded.dll" || exit 1
+    g++ $CXXFLAGS -Isdk/include -shared $CXX_STATIC -s examples/dungeon_captives/src/*.cpp -o "$BUILD/bin/dungeon_captives.dll" || exit 1
     g++ $CXXFLAGS -Isdk/include -shared $CXX_STATIC -s tests/cpp_plugin.cpp -o "$BUILD/bin/cpp_plugin.dll" || exit 1
     g++ $CXXFLAGS -Isdk/include -shared $CXX_STATIC -s tests/settings_plugin.cpp -o "$BUILD/bin/settings_plugin.dll" || exit 1
     gcc $CFLAGS -Isdk/include -shared -static-libgcc -s tests/api_plugin.c -o "$BUILD/bin/api_plugin.dll" || exit 1
@@ -431,7 +432,7 @@ test_cpp_plugin() {
     check "$label C++: game exits cleanly" exit_is "$?" 0
     check "$label C++: no runtime DLLs to ship" imports_no_runtime "$dll"
     check "$label C++: every check passed" log_lacks "$game" "FAILED"
-    check "$label C++: all checks ran" exit_is "$(count_in_log "$game" "\[cpp_main\] check .*: ok$")" 78
+    check "$label C++: all checks ran" exit_is "$(count_in_log "$game" "\[cpp_main\] check .*: ok$")" 82
     check "$label C++: declarations match the game" log_lacks "$game" "Check the declaration"
     check "$label C++: throwing hook logged once" exit_is "$(count_in_log "$game" "The hook on FakeCharacter::Overloaded(int) failed: this hook fails on purpose. The game's own code ran instead")" 1
     check "$label C++: failed start explained" log_has "$game" "\[cpp_fail\] Not started: stopping on purpose. Its 13 changes are undone"
@@ -458,6 +459,7 @@ test_cpp_plugin() {
     check "$label C++: one lambda in two places" results_have "$game" "first=50$"
     check "$label C++: one lambda in two places, second" results_have "$game" "second=50$"
     check "$label C++: fields by name, list and singleton" results_have "$game" "total=42$"
+    check "$label C++: list grown as the game grows it, then reserved" results_have "$game" "helpers=5 of 16$"
     check "$label C++: text field changed by name" results_have "$game" "toon_name=Renamed by a plugin, with a long name$"
     check "$label C++: created object destroyed by the game's destructor" results_have "$game" "boards_destroyed=1$"
     check "$label C++: game's own enum words still read" results_have "$game" "load_level=0$"
@@ -656,6 +658,150 @@ test_real_exe() {
     check "real exe: custom rules forget the last game's" grep -q "^\[quests_expanded\] Hooked mmoModeInGame::DoInit()$" <<< "$output"
     check "real exe: custom rules make room while the game sizes its list" exit_is "$(grep -c "Hooked the call at mmoCustomRules::SetupGrid" <<< "$output")" 2
     check "real exe: custom rule added" grep -q "Custom rule \"quests_expanded_disable_story\" added" <<< "$output"
+
+    # The Dungeon Captives mod: it reads from the game's own code where gizmos keep their variants and characters their
+    # looks.
+    rm -rf "$BUILD/probe_dungeon_captives"
+    mkdir -p "$BUILD/probe_dungeon_captives/native"
+    cp "$BUILD/bin/dungeon_captives.dll" "$BUILD/probe_dungeon_captives/native/"
+    output="$("$BUILD/bin/probe_plugin_real_exe.exe" "$(cygpath -w "$MT2_EXE")" "$(cygpath -w "$BUILD/probe_dungeon_captives/native/dungeon_captives.dll")" dungeon_captives)"
+    code=$?
+    echo "$output"
+
+    check "real exe: Dungeon Captives starts" exit_is "$code" 0
+    check "real exe: Dungeon Captives reads the game's layout" grep -q "(gizmo variants at +0xa8, actor 0x48 bytes, costume skeleton at +0x38, type colors at +0x18)$" <<< "$output"
+    check "real exe: captives are picked in the character window" exit_is "$(grep -c "Hooked mmoCursorBehaviourGizmo::\(Activate\|Update\|Deactivate\)" <<< "$output")" 5
+}
+
+# The research commands against the real game, checked with what LOADER.md and the weapons example already know.
+test_sdk_research() {
+    if [ -z "${MT2_EXE:-}" ]; then
+        echo "skipped: mt2sdk research commands (set MT2_EXE)"
+        return
+    fi
+
+    local sdk="$DIST/sdk/mt2sdk.exe"
+    local exe
+    local output
+    exe="$(cygpath -w "$MT2_EXE")"
+
+    output="$("$sdk" dis "mmoCharacter::EquipWeaponModel(bool)" --exe "$exe")"
+    check "sdk dis: the rig check's text" grep -q '^  +0x53 .*lea rdx, \[0x14148deb2\] *; "humanoid"$' <<< "$output"
+    check "sdk dis: the rig check's call" grep -q '^  +0x5a .*call 0x1411e3aa0 *; bool std::operator==<' <<< "$output"
+    check "sdk dis: jumps inside the function" grep -q '^  +0x4d .*jle 0x1403a1e9c *; +0xac$' <<< "$output"
+
+    output="$("$sdk" uses "mmoCharacter::EquipWeaponModel(bool)" --exe "$exe")"
+    check "sdk uses: calls" grep -q "^    mmoSkeletonInstance::SetWeaponAttachment(" <<< "$output"
+    check "sdk uses: texts" grep -q '^    "hand"$' <<< "$output"
+
+    output="$("$sdk" refs "mmoCharacter::EquipWeaponModel(bool)" --exe "$exe")"
+    check "sdk refs: callers" grep -q "^  mmoNPC::Generate(mmoCharacterTypeID const&, bool)+0x8b  *0x1403c717b  call$" <<< "$output"
+
+    output="$("$sdk" refs mmoWindow::OnShow --exe "$exe")"
+    check "sdk refs: a virtual's slot in each vtable" grep -q "^  vtable for mmoActionBar+0xc0 .* table (virtual, slot 22)$" <<< "$output"
+    check "sdk refs: where it's compared, not called (inlined)" grep -q "^  mmoWindow::Show(bool, bool) \[clone .part.0\]+0x12e .* address$" <<< "$output"
+
+    output="$("$sdk" text humanoid --exe "$exe")"
+    check "sdk text: where a text is used" grep -q "^  mmoCostumeEditorView::_UpdateGrid()+0x82 .* address$" <<< "$output"
+
+    output="$("$sdk" vtable mmoWindow --exe "$exe")"
+    check "sdk vtable: slots" grep -q "^   22  +0xb0    mmoWindow::OnShow()$" <<< "$output"
+
+    output="$("$sdk" vtable mmoDesktopLauncherWindow --exe "$exe")"
+    check "sdk vtable: a second base's table" grep -q "^  table for the base at +0x18$" <<< "$output"
+
+    output="$("$sdk" dis mmoNothingHere --exe "$exe" 2>&1)"
+    check "sdk dis: unknown name explained" grep -q "mmoNothingHere isn't a name in the game. Search with: mt2sdk find <words>" <<< "$output"
+
+    # Each kind of mistake in a mapping file, with its line.
+    output="$("$sdk" mappings check "$(cygpath -w "$ROOT/tests/mappings_bad")" --exe "$exe")"
+    check "mappings: unknown class" grep -q "^bad.mapping:1: no function, global or type info in the game belongs to mmoNothing$" <<< "$output"
+    check "mappings: offset past the size" grep -q "^bad.mapping:4: 0x170 is past the end of mmoCharacter (0x100 bytes)$" <<< "$output"
+    check "mappings: seen place inside an instruction" grep -q "^bad.mapping:5: +0x25d isn't the start of an instruction in mmoCharacter::EquipWeaponModel(bool)" <<< "$output"
+    check "mappings: two fields at one offset" grep -q "^bad.mapping:6: mmoCharacter already has a field shard at 0x170 (line 4)$" <<< "$output"
+    check "mappings: unknown method" grep -q "^bad.mapping:7: mmoCharacter::Nope(int) isn't a name in the game$" <<< "$output"
+    check "mappings: tabs refused" grep -q "^bad.mapping:8: indent with 4 spaces, not tabs$" <<< "$output"
+    check "mappings: size against the code" grep -q "^bad.mapping:10: the game makes each mmoActor with 0x48 bytes (operator new before its constructor), not 0x40$" <<< "$output"
+    check "mappings: a field the game already names, in a base class" grep -q "^bad.mapping:12: 0x6f8 is already the game's field mmoCharacter::level (int at 0x6f8)$" <<< "$output"
+
+    # Unnamed slots that hold an address (how MinGW reaches vtables and globals) are named by what they hold.
+    output="$("$sdk" dis "mmoToon::GetSelfAdvertisements()" --exe "$exe")"
+    check "sdk dis: a slot named by what it holds" grep -q "^  +0x19a .*; address of vtable for mmoNPCAdvertisement$" <<< "$output"
+
+    output="$("$sdk" mappings json "$(cygpath -w "$ROOT/tests/mappings_sizes")" "$(cygpath -w "$BUILD/mappings_sizes.json")" --exe "$exe")"
+    check "mappings json: a class's size from the code" grep -q '"size":	72,' "$BUILD/mappings_sizes.json"
+    check "mappings json: a method's address" grep -q '"address":	"0x140022220"' "$BUILD/mappings_sizes.json"
+
+    # The game's classes as C++ for plugins: made from the game and the mappings, and every kind of function they have
+    # compiles as a plugin uses it.
+    if [ -d "$ROOT/../mt2-mappings" ]; then
+        mkdir -p "$BUILD/headers"
+        output="$("$sdk" headers "$(cygpath -w "$BUILD/headers/mt2game.hpp")" --mappings "$(cygpath -w "$ROOT/../mt2-mappings")" --exe "$exe")"
+        check "sdk headers: written" grep -q "classes written to" <<< "$output"
+        check "sdk headers: the game's own field, by its name" grep -q 'inline int& mmoCharacter::level() const { return game::field<int>(self, "mmoCharacter::level"); }' "$BUILD/headers/mt2game.hpp"
+        check "sdk headers: an enum with the game's words" grep -q "enum class mmoNPC_State : int { Idle = 0, Combat = 1, Dead = 2 };" "$BUILD/headers/mt2game.hpp"
+        g++ $CXXFLAGS -fsyntax-only -Isdk/include -I"$BUILD/headers" tests/game_classes_usage.cpp > "$BUILD/headers/compile.log" 2>&1
+        check "sdk headers: compile with a plugin that uses them" exit_is "$?" 0
+    fi
+
+    # What the exe says about a class and an enum, without Ghidra.
+    output="$("$sdk" class mmoNPC --exe "$exe")"
+    check "sdk class: built on" grep -q "^class mmoNPC : vsObject<mmoNPC, mmoCharacter>    0x980 bytes$" <<< "$output"
+    check "sdk class: source file" grep -q "^  source: Games/MMORPG/MapEntities/MMO_NPC.cpp$" <<< "$output"
+    check "sdk class: a field the game names" grep -q "+0x834   mmoNPC::State *state" <<< "$output"
+
+    output="$("$sdk" enum mmoNPC::State --exe "$exe")"
+    check "sdk enum: the game's words" exit_is "$(grep -c "Idle\|Combat\|Dead" <<< "$output")" 3
+
+    # A page per class to share (names only), and an update check that finds nothing between a build and itself.
+    rm -rf "$BUILD/reference"
+    output="$("$sdk" reference "$(cygpath -w "$BUILD/reference")" --exe "$exe")"
+    check "sdk reference: pages written" grep -q "class pages written to" <<< "$output"
+    check "sdk reference: a class page" grep -q "^Built on \[mmoCharacter\](mmoCharacter.md) (through \`vsObject<mmoNPC, mmoCharacter>\`)" "$BUILD/reference/classes/mmoNPC.md"
+
+    output="$(cd "$BUILD" && "$sdk" diff "$exe" --exe "$exe")"
+    check "sdk diff: a build against itself" grep -q "^Functions: 0 added, 0 removed, 0 changed size$" <<< "$output"
+
+    # A new project gets the game's classes and debugger settings with the game's folder in them.
+    rm -rf "$BUILD/sdk_new_devkit"
+    "$sdk" new "$(cygpath -w "$BUILD/sdk_new_devkit/Kit_Test")" --exe "$exe" > /dev/null
+    check "sdk new: the game's classes" test -f "$BUILD/sdk_new_devkit/Kit_Test/include/mt2game.hpp"
+    check "sdk new: VS Code attaches to the game" grep -q '"request": "attach"' "$BUILD/sdk_new_devkit/Kit_Test/.vscode/launch.json"
+    check "sdk new: Visual Studio starts the game" grep -q 'MT2.exe' "$BUILD/sdk_new_devkit/Kit_Test/.vs/launch.vs.json"
+
+    # The mappings project next to this repository, when it's there, checks clean against the game it describes.
+    if [ -d "$ROOT/../mt2-mappings" ]; then
+        output="$("$sdk" mappings check "$(cygpath -w "$ROOT/../mt2-mappings")" --exe "$exe")"
+        check "mappings: mt2-mappings checks clean" grep -q " 0 problems$" <<< "$output"
+    fi
+}
+
+# The export's folding of copied-in engine code, on a decompiled function; needs a JDK (skipped without one).
+test_ghidra_folds() {
+    local java_bin="${JAVA_HOME:+$JAVA_HOME/bin}"
+    local javac="${java_bin:+$java_bin/}javac"
+    local out="$BUILD/fold"
+
+    if ! command -v "$javac" > /dev/null; then
+        echo "skipped: Ghidra folds (no JDK)"
+
+        return
+    fi
+
+    rm -rf "$out" && mkdir -p "$out"
+    "$javac" -nowarn -d "$(cygpath -w "$out")" tools/ghidra/MT2Fold.java tests/fold/FoldCheck.java 2> /dev/null
+    local folded
+    folded="$("${java_bin:+$java_bin/}java" -cp "$(cygpath -w "$out")" FoldCheck tests/fold/decompiled.txt)"
+
+    check "folds: an assert is vsAssert with its source line" grep -qF 'vsAssert(m_scene, "Trying to build a mmoBlueprint as a group without a scene being set"); // MMO_Blueprint.cpp line 653' <<< "$folded"
+    check "folds: formatting and vsLog_ are vsLog" grep -qF 'vsLog("Scenery object \'"'"'%s:%d\'"'"' has no renderable instance model??", uVar14,' <<< "$folded"
+    check "folds: a piecewise copy is one assignment" grep -qF 'local_1e8[0] = *(vsTransform3D *)mmoGroup::GetPropLocalTransform(group,(int)lVar18);' <<< "$folded"
+    check "folds: vsArray's inlined add is AddItem" grep -qF 'this->modelInstances.AddItem(modelInstance);' <<< "$folded"
+    check "folds: an add of an object copied in pieces" grep -qF 'this->matrix4x4s.AddItem(*(vsMatrix4x4 *)puVar11);' <<< "$folded"
+    check "folds: __dynamic_cast is dynamic_cast" grep -qF 'dynamic_cast<mmoScenery*>(lVar8)' <<< "$folded"
+    check "folds: a dynamic_cast over two lines" grep -qF 'pvVar6 = dynamic_cast<mmoScenery*>(*(void **)(local_280 + lVar18 * 8));' <<< "$folded"
+    check "folds: a local vsArray's cleanup is left out" bash -c '! grep -q "PTR__vsArray" <<< "$1"' _ "$folded"
+    check "folds: unused locals are left out" bash -c '! grep -q "uStack_220" <<< "$1"' _ "$folded"
 }
 
 
@@ -688,6 +834,8 @@ test_cpp_plugins
 test_sdk_new_project
 test_c_header_in_cpp
 test_real_exe
+test_sdk_research
+test_ghidra_folds
 
 echo "$passes passed, $failures failed"
 [ "$failures" = 0 ]

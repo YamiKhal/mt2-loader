@@ -1,4 +1,6 @@
 #include "chapter_rewards.h"
+#include "dungeon_quests.h"
+#include "dungeon_runs.h"
 #include "hand_ins.h"
 #include "hand_offs.h"
 #include "layout.h"
@@ -63,6 +65,8 @@ void plugin::init() {
     objective_undo::install();
     target_arrows::install();
     progress_text::install();
+    dungeon_quests::install();
+    dungeon_runs::install();
     window_files::install();
     quests_report::install();
 
@@ -72,4 +76,6 @@ void plugin::init() {
         settings.main_preference, settings.repeat_cooldown_days, layout.pane_visible, layout.button_tooltip, layout.card_quest,
         layout.advance_need, layout.loot_need, layout.quest_advertisement, layout.region_npcs, layout.npc_list,
         layout.demand_change_keys);
+    plugin::log("Dungeons to clear (entrance's dungeon at +{:#x}, run's dungeon at +{:#x})",
+        layout.building_dungeon, layout.run_dungeon);
 }
