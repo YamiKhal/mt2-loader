@@ -33,6 +33,8 @@ import ghidra.program.model.listing.Variable;
 import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.listing.VariableUtilities;
 import ghidra.program.model.symbol.FlowType;
+import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.StackReference;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
@@ -44,6 +46,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -327,6 +330,59 @@ public class MT2Apply extends GhidraScript {
 
             enums.put(full, manager.addDataType(created, DataTypeConflictHandler.REPLACE_HANDLER));
         }
+
+        replaceDemangledEnums();
+    }
+
+    // The demangler meets an enum only as a name in a signature, so it makes a one-byte placeholder for it
+    // (/Demangler/mmoPartyMember/State, a typedef of undefined): a parameter of that type gets no register, and the
+    // body reads a made-up param_2, or a field0_0x0. Every use of the placeholder becomes the real enum; an enum the
+    // game doesn't reflect (mmoGame::GameMode) becomes one without words, 4 bytes like every enum the game has.
+    private void replaceDemangledEnums() {
+        DataTypeManager manager = currentProgram.getDataTypeManager();
+        List<DataType> placeholders = new ArrayList<>();
+        Iterator<DataType> all = manager.getAllDataTypes();
+
+        while (all.hasNext()) {
+            DataType type = all.next();
+
+            DataType base = type instanceof TypeDef typedef ? typedef.getBaseDataType() : null;
+            boolean unknown = base == DataType.DEFAULT || base instanceof Undefined;
+
+            if (unknown && type.getLength() == 1 && type.getCategoryPath().getPath().startsWith("/Demangler") && !isLibraryPlaceholder(type)) {
+                placeholders.add(type);
+            }
+        }
+
+        for (DataType placeholder : placeholders) {
+            String folder = placeholder.getCategoryPath().getPath().substring("/Demangler".length());
+            String full = (folder.isEmpty() ? "" : folder.substring(1).replace("/", "::") + "::") + placeholder.getName();
+
+            if (models.containsKey(full)) {
+                continue;
+            }
+
+            DataType replacement = enums.get(full);
+
+            if (replacement == null) {
+                CategoryPath category = folder.isEmpty() ? MT2_TYPES : new CategoryPath(MT2_TYPES, folder.substring(1).split("/"));
+                replacement = manager.addDataType(new EnumDataType(category, placeholder.getName(), 4, manager), DataTypeConflictHandler.KEEP_HANDLER);
+            }
+
+            try {
+                manager.replaceDataType(placeholder, replacement, false);
+            } catch (DataTypeDependencyException problem) {
+                notes.add(full + ": the demangler's placeholder couldn't be replaced: " + problem.getMessage());
+            }
+        }
+    }
+
+    // The C++ library's placeholders are its tags, functors and pairs, not enums.
+    private boolean isLibraryPlaceholder(DataType type) {
+        String path = type.getPathName();
+
+        return path.startsWith("/Demangler/std/") || path.startsWith("/Demangler/__gnu_cxx/") || path.contains("<")
+            || type.getName().equals("nullptr");
     }
 
     // The structure Ghidra uses for a class's "this" (so the decompiler shows its fields by name), or one in /MT2.
@@ -927,17 +983,40 @@ public class MT2Apply extends GhidraScript {
 
     // A method's object comes in the first register, so its parameters sit one register later than its name alone
     // says. A function that reads the register after its last named parameter before writing it has a "this"; one
-    // that reads "further" registers past it also takes the address for a class it returns by value.
+    // that reads "further" registers past it also takes the address for a class it returns by value. From the fifth
+    // on, parameters are on the stack (Stack[0x28] is the fifth): mmoCrossSection::GenerateXZScaled(Type, float, float,
+    // float) reads a fifth, so it has a "this".
     private boolean readsRegisterPastName(Function function, List<DataType> types, int further) {
         int position = types.size() + further;
 
         if (position >= INTEGER_REGISTERS.length) {
-            return false;
+            return readsStackParameter(function, 8 + 8 * position);
         }
 
         DataType last = types.isEmpty() ? null : types.get(types.size() - 1);
-        boolean isFloat = last instanceof FloatDataType || last instanceof DoubleDataType;
-        Register wanted = currentProgram.getRegister(isFloat ? FLOAT_REGISTERS[position] : INTEGER_REGISTERS[position]).getBaseRegister();
+
+        return readsBeforeWriting(function, registerFor(last, position));
+    }
+
+    private boolean readsStackParameter(Function function, int offset) {
+        for (Instruction instruction : currentProgram.getListing().getInstructions(function.getBody(), true)) {
+            for (Reference reference : instruction.getReferencesFrom()) {
+                if (reference instanceof StackReference stack && stack.getStackOffset() == offset && reference.getReferenceType().isRead()) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private Register registerFor(DataType type, int slot) {
+        boolean isFloat = type instanceof FloatDataType || type instanceof DoubleDataType;
+
+        return currentProgram.getRegister(isFloat ? FLOAT_REGISTERS[slot] : INTEGER_REGISTERS[slot]).getBaseRegister();
+    }
+
+    private boolean readsBeforeWriting(Function function, Register wanted) {
         Instruction instruction = getInstructionAt(function.getEntryPoint());
 
         for (int count = 0; instruction != null && count < 64; count++) {

@@ -14,6 +14,8 @@ import com.google.gson.JsonParser;
 
 import ghidra.app.decompiler.ClangFieldToken;
 import ghidra.app.decompiler.ClangNode;
+import ghidra.app.decompiler.ClangToken;
+import ghidra.app.decompiler.ClangVariableToken;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.DecompileResults;
@@ -261,18 +263,65 @@ public class MT2Export extends GhidraScript {
 
     // The decompiler's own tokens know which structure and offset each "->field_0x4c" is.
     private void collectUnnamedFields(ClangNode node, List<FieldUse> into) {
-        if (node instanceof ClangFieldToken field && field.getDataType() instanceof Structure structure
-            && UNNAMED_FIELD.matcher(field.getText()).matches()) {
+        List<ClangNode> tokens = new ArrayList<>();
+        node.flatten(tokens);
+
+        for (int at = 0; at < tokens.size(); at++) {
+            if (!(tokens.get(at) instanceof ClangFieldToken field) || !(field.getDataType() instanceof Structure structure)
+                || !UNNAMED_FIELD.matcher(field.getText()).matches() || isMistypedPointer(tokens, at)) {
+                continue;
+            }
+
             DataTypeComponent component = structure.getComponentContaining(field.getOffset());
             DataType type = component != null ? component.getDataType() : null;
             String typeName = type == null || type == DataType.DEFAULT || type instanceof Undefined ? "?" : cleanType(types(type.getDisplayName()));
 
             into.add(new FieldUse(className(structure), field.getOffset(), typeName));
         }
+    }
 
-        for (int index = 0; index < node.numChildren(); index++) {
-            collectUnnamedFields(node.Child(index), into);
+    // nullObject[3].field_0x8, this[-1].field_0x18: a pointer stepped a fixed number of whole structures away is one
+    // Ghidra gave the wrong type (a base class, or the class a member sits in), not an array; the offset isn't that
+    // class's field. A real array steps by a counter (items[index].field_0x8) or is a member (this->colors[2]).
+    private boolean isMistypedPointer(List<ClangNode> tokens, int field) {
+        int at = previousToken(tokens, field);
+
+        if (at < 0 || !text(tokens, at).equals(".") || (at = previousToken(tokens, at)) < 0 || !text(tokens, at).equals("]")) {
+            return false;
         }
+
+        boolean fixedStep = false;
+        int depth = 0;
+
+        for (at = previousToken(tokens, at); at >= 0; at = previousToken(tokens, at)) {
+            String text = text(tokens, at);
+
+            if (text.equals("]")) {
+                depth++;
+            } else if (text.equals("[") && depth-- == 0) {
+                break;
+            } else if (text.matches("-?(0x[0-9a-f]+|\\d+)")) {
+                fixedStep = true;
+            }
+        }
+
+        int base = at < 0 ? -1 : previousToken(tokens, at);
+
+        return fixedStep && base >= 0 && tokens.get(base) instanceof ClangVariableToken;
+    }
+
+    private int previousToken(List<ClangNode> tokens, int at) {
+        for (int index = at - 1; index >= 0; index--) {
+            if (!text(tokens, index).isBlank()) {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private String text(List<ClangNode> tokens, int at) {
+        return tokens.get(at) instanceof ClangToken token && token.getText() != null ? token.getText().trim() : "";
     }
 
     // A class's structure sits in a folder named after the namespace it's in: /Demangler/mmoNPC/Advert is mmoNPC::Advert.
@@ -742,6 +791,9 @@ public class MT2Export extends GhidraScript {
         }
 
         body = virtualCalls(body, ownerClass(function));
+        // Ghidra reads a virtual call made as the function's last jump as a switch it couldn't rebuild; once the call
+        // has its name, it was never a switch.
+        body = body.replaceAll("(?m)^[ \\t]*// a switch Ghidra couldn't rebuild\\n(?![^\\n]*code \\*)", "");
         body = methodCalls(body, ownerClass(function));
         body = nameLocals(body, renames);
         body = renameAll(body, renames);
@@ -1108,7 +1160,7 @@ public class MT2Export extends GhidraScript {
             declared.put("this", owner);
         }
 
-        Matcher call = Pattern.compile("\\(\\*\\*\\(code \\*\\*\\)\\((?:\\*\\(long long \\*\\)(\\w+)|\\(long long\\)(\\w+)->vtable) \\+ (0x[0-9a-f]+|\\d+)\\)\\)\\(")
+        Matcher call = Pattern.compile("\\(\\*\\*\\(code \\*\\*\\)\\((?:\\*\\(long long \\*\\)(\\w+(?:->\\w+)*)|\\(long long\\)(\\w+(?:->\\w+)*)->vtable) \\+ (0x[0-9a-f]+|\\d+)\\)\\)\\(")
             .matcher(text);
         StringBuilder result = new StringBuilder();
         int position = 0;
@@ -1116,7 +1168,7 @@ public class MT2Export extends GhidraScript {
         while (call.find(position)) {
             String object = call.group(1) != null ? call.group(1) : call.group(2);
             int close = matchingParenthesis(text, call.end() - 1);
-            Function target = close < 0 ? null : slotFunction(declared.get(object), number(call.group(3)));
+            Function target = close < 0 ? null : slotFunction(classOf(object, declared), number(call.group(3)));
             List<String> arguments = close < 0 ? List.of() : splitArguments(text.substring(call.end(), close));
 
             if (target == null || arguments.isEmpty() || !stripCast(arguments.get(0)).equals(object)) {
@@ -1143,6 +1195,50 @@ public class MT2Export extends GhidraScript {
         result.append(text.substring(position));
 
         return result.toString();
+    }
+
+    // The class an object is: a local's declared class, or, for this->toon, the class toon points at by its field's
+    // type (from the game, the mappings, or a base class's). Null when a step isn't a known pointer to a class.
+    private String classOf(String object, Map<String, String> declared) {
+        int arrow = object.lastIndexOf("->");
+
+        if (arrow < 0) {
+            return declared.get(object);
+        }
+
+        String type = fieldType(classOf(object.substring(0, arrow), declared), object.substring(arrow + 2));
+
+        if (type == null || !type.matches("[\\w:<>, ]+\\s*\\*")) {
+            return null;
+        }
+
+        String pointed = type.substring(0, type.length() - 1).trim();
+
+        return classes.containsKey(pointed) ? pointed : null;
+    }
+
+    private String fieldType(String className, String fieldName) {
+        ClassInfo info = className != null ? classes.get(className) : null;
+
+        if (info == null) {
+            return null;
+        }
+
+        for (String[] field : info.fields.values()) {
+            if (field[1].equals(fieldName)) {
+                return field[0];
+            }
+        }
+
+        for (String base : info.bases) {
+            String type = fieldType(base, fieldName);
+
+            if (type != null) {
+                return type;
+            }
+        }
+
+        return null;
     }
 
     // The function in a class's vtable at this byte offset, or null.

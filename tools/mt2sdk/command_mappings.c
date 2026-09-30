@@ -77,7 +77,25 @@ static bool class_exists(const char* class_name) {
 
     snprintf(text, sizeof text, "typeinfo for %s", class_name);
 
-    return any_name_contains(text);
+    if (any_name_contains(text)) {
+        return true;
+    }
+
+    // A class with no functions of its own can still be a parameter: NodeSet::Find(..., mmoPathfinderNode::Price const&).
+    static const char* const befores[] = { "(", ", " };
+    static const char* const afters[] = { " ", "*", "&", ")", "," };
+
+    for (size_t before = 0; before < sizeof befores / sizeof *befores; before++) {
+        for (size_t after = 0; after < sizeof afters / sizeof *afters; after++) {
+            snprintf(text, sizeof text, "%s%s%s", befores[before], class_name, afters[after]);
+
+            if (any_name_contains(text)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 static bool resolves(Checker* checker, const Entry* entry, const char* name) {
