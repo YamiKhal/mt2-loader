@@ -24,6 +24,7 @@ import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Function.FunctionUpdateType;
 import ghidra.program.model.listing.GhidraClass;
+import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.LocalVariableImpl;
 import ghidra.program.model.listing.Parameter;
 import ghidra.program.model.listing.ParameterImpl;
@@ -31,6 +32,7 @@ import ghidra.program.model.listing.ReturnParameterImpl;
 import ghidra.program.model.listing.Variable;
 import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.listing.VariableUtilities;
+import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
@@ -54,6 +56,7 @@ public class MT2Apply extends GhidraScript {
     private static final String[] INTEGER_REGISTERS = { "RCX", "RDX", "R8", "R9" };
     private static final String INFERRED_LOCAL = "Typed by MT2Infer";
     private static final String[] FLOAT_REGISTERS = { "XMM0", "XMM1", "XMM2", "XMM3" };
+    private static final String[] VOLATILE_REGISTERS = { "RAX", "RCX", "RDX", "R8", "R9", "R10", "R11" };
     private static final Pattern ARRAY = Pattern.compile("(.+)\\[(\\d+)\\]");
 
     private static class FieldModel {
@@ -94,6 +97,8 @@ public class MT2Apply extends GhidraScript {
     private int byValueFixed;
     private int signaturesFixed;
     private final List<Long> gameFunctions = new ArrayList<>();
+    // Functions that had "result, self" from an earlier run: their parameters come from their names again, whatever they hold now.
+    private final Set<Long> unfixed = new HashSet<>();
 
     @Override
     public void run() throws Exception {
@@ -130,14 +135,21 @@ public class MT2Apply extends GhidraScript {
 
         fixDynamicCast();
 
+        JsonArray byValue = inferred != null ? returningFirstArgument(inferred.getAsJsonArray("byValue")) : null;
+
+        if (byValue != null) {
+            addUnlistedByValue(byValue);
+        }
+
         if (inferred != null) {
-            unfixByValue(inferred.getAsJsonArray("byValue"));
+            unfixByValue(byValue);
         }
 
         fixSignatures();
+        typeContainerAccessors();
 
         if (inferred != null) {
-            fixByValue(inferred.getAsJsonArray("byValue"));
+            fixByValue(byValue);
             typeReturns(inferred.getAsJsonArray("returns"));
             typeLocals(inferred.getAsJsonArray("locals"));
         }
@@ -159,8 +171,9 @@ public class MT2Apply extends GhidraScript {
         return JsonParser.parseString(Files.readString(file.toPath(), StandardCharsets.UTF_8)).getAsJsonObject();
     }
 
+    // std::__cxx11::string and std::string are one class (GCC's new-ABI namespace), built once with what both say.
     private ClassModel model(String name) {
-        return models.computeIfAbsent(name, key -> {
+        return models.computeIfAbsent(name.replace("std::__cxx11::", "std::"), key -> {
             ClassModel created = new ClassModel();
             created.name = key;
             return created;
@@ -277,7 +290,16 @@ public class MT2Apply extends GhidraScript {
         String stripped = base.replaceFirst("^(?:mmo|vs|MMO|VS)(?=[A-Z])", "");
         String name = Character.toLowerCase(stripped.charAt(0)) + stripped.substring(1);
 
-        return list ? (name.endsWith("s") ? name + "es" : name + "s") : name;
+        return list ? plural(name) : name;
+    }
+
+    // checkbox is checkboxes, category categories.
+    static String plural(String name) {
+        if (name.matches(".*(?:s|x|z|ch|sh)")) {
+            return name + "es";
+        }
+
+        return name.matches(".*[^aeiou]y") ? name.substring(0, name.length() - 1) + "ies" : name + "s";
     }
 
     private boolean isWorthAStructure(ClassModel model) {
@@ -313,12 +335,16 @@ public class MT2Apply extends GhidraScript {
             return structures.get(name);
         }
 
-        Structure structure = null;
-        Namespace namespace = name.contains("<T") ? null : findNamespace(name);
+        Structure structure = name.startsWith("std::") ? demangledStructure(name) : null;
+        Namespace namespace = structure != null || name.contains("<T") ? null : findNamespace(name);
 
         if (namespace != null) {
             GhidraClass ghidraClass = namespace instanceof GhidraClass known ? known : NamespaceUtils.convertNamespaceToClass(namespace);
             structure = VariableUtilities.findOrCreateClassStruct(ghidraClass, currentProgram.getDataTypeManager());
+        }
+
+        if (structure == null) {
+            structure = demangledStructure(name);
         }
 
         if (structure == null) {
@@ -331,6 +357,31 @@ public class MT2Apply extends GhidraScript {
         structures.put(name, structure);
 
         return structure;
+    }
+
+    // A type Ghidra made from the mangled names, with no functions of its own to make it a class: std::string is the
+    // structure "string" in /Demangler/std/__cxx11, and that's the one the decompiler shows.
+    private Structure demangledStructure(String name) {
+        List<String> spellings = new ArrayList<>();
+
+        // Where both exist, the decompiler uses the __cxx11 one.
+        if (name.startsWith("std::")) {
+            spellings.add("std::__cxx11::" + name.substring(5));
+        }
+
+        spellings.add(name);
+
+        for (String spelling : spellings) {
+            int last = spelling.lastIndexOf("::");
+            String folder = "/Demangler" + (last < 0 ? "" : "/" + spelling.substring(0, last).replace("::", "/"));
+            DataType found = currentProgram.getDataTypeManager().getDataType(new CategoryPath(folder), spelling.substring(last + 2));
+
+            if (found instanceof Structure structure) {
+                return structure;
+            }
+        }
+
+        return null;
     }
 
     private Namespace findNamespace(String name) {
@@ -437,6 +488,7 @@ public class MT2Apply extends GhidraScript {
         collectFields(model, 0, fields, new HashSet<>());
         fields.sort(Comparator.comparingInt(field -> field.offset));
         fields.removeIf(field -> field.inferred && model.size > 0 && field.offset >= model.size);
+        fields.removeIf(field -> field.inferred && model.hasVtable && field.offset < 8);
 
         // Built afresh each run, so a field the mappings or the code no longer give doesn't linger.
         if (!structure.isZeroLength()) {
@@ -452,7 +504,9 @@ public class MT2Apply extends GhidraScript {
         growTo(structure, Math.max(Math.max(model.size, end), model.hasVtable ? 8 : 0));
 
         if (model.hasVtable && fields.stream().noneMatch(field -> field.offset == 0)) {
-            place(structure, name, 0, "vtable", PointerDataType.dataType, "The class's virtual functions (mt2sdk vtable)");
+            // Without the program's data type manager a pointer is 4 bytes, and the vtable's upper half looks like a field.
+            DataType vtable = new PointerDataType(VoidDataType.dataType, currentProgram.getDataTypeManager());
+            place(structure, name, 0, "vtable", vtable, "The class's virtual functions (mt2sdk vtable)");
         }
 
         Set<String> usedNames = new HashSet<>();
@@ -656,8 +710,149 @@ public class MT2Apply extends GhidraScript {
             if (parameters.length > 0 && parameters[0].getName().equals("result") && !listed.contains(entry)) {
                 parameters[0].setName("param_1", SourceType.ANALYSIS);
                 function.setSignatureSource(SourceType.DEFAULT);
+                unfixed.add(entry);
             }
         }
+    }
+
+    // Windows x64 hands a class returned by value back by its address in RAX: the one it was given in RCX. A function
+    // MT2Infer lists that never copies RCX into RAX only looked like one (a register read Ghidra made up).
+    private JsonArray returningFirstArgument(JsonArray list) {
+        JsonArray kept = new JsonArray();
+
+        if (list == null) {
+            return kept;
+        }
+
+        for (JsonElement element : list) {
+            Function function = getFunctionAt(toAddr(element.getAsJsonObject().get("function").getAsString()));
+
+            if (function != null && traceFirstArgument(function).returned()) {
+                kept.add(element);
+            }
+        }
+
+        if (kept.size() < list.size()) {
+            println("MT2: " + (list.size() - kept.size()) + " functions MT2Infer took for returning a class by value don't return its address");
+        }
+
+        return kept;
+    }
+
+    // Methods returning a class by value that MT2Infer can't see (it counts only integer registers): their parameters
+    // sit two registers past what their names give (the result's address, then the object), and they return RCX.
+    // mmoDistrict::_MakeRectangle(float, float) reads XMM2 and XMM3 and builds an mmoCrossSection in RCX.
+    private void addUnlistedByValue(JsonArray byValue) {
+        Set<String> listed = new HashSet<>();
+        int added = 0;
+
+        for (JsonElement element : byValue) {
+            listed.add(element.getAsJsonObject().get("function").getAsString());
+        }
+
+        for (long entry : gameFunctions) {
+            Function function = getFunctionAt(toAddr(entry));
+            String address = "0x" + Long.toHexString(entry);
+            List<DataType> types = function != null && isMethod(function) && !listed.contains(address) ? mangledParameterTypes(function) : null;
+
+            if (types == null || !readsRegisterPastName(function, types, 1)) {
+                continue;
+            }
+
+            FirstArgument traced = traceFirstArgument(function);
+
+            if (!traced.returned()) {
+                continue;
+            }
+
+            JsonObject item = new JsonObject();
+            item.addProperty("function", address);
+
+            if (traced.classOfResult() != null) {
+                item.addProperty("class", traced.classOfResult());
+            }
+
+            byValue.add(item);
+            added++;
+        }
+
+        println("MT2: " + added + " more methods return a class by value (the code reads past their parameters and returns RCX)");
+    }
+
+    private record FirstArgument(boolean returned, String classOfResult) {}
+
+    // Follows RCX through 64-bit copies (mov rbx, rcx ... mov rax, rbx, or through a stack slot: mov [rsp+0x350], rcx
+    // ... mov rax, [rsp+0x350]) in address order, dropping a place once something else is written to it. Whether it
+    // ends up in RAX, and the class of the first constructor or method called on it. A tail call (jmp to another
+    // function) with RCX still holding it passes it on, and the function it jumps to returns it.
+    private FirstArgument traceFirstArgument(Function function) {
+        Register result = currentProgram.getRegister("RAX").getBaseRegister();
+        Register first = currentProgram.getRegister("RCX").getBaseRegister();
+        Set<Register> holders = new HashSet<>();
+        Set<String> stackHolders = new HashSet<>();
+        String classOfResult = null;
+
+        holders.add(first);
+
+        for (Instruction instruction : currentProgram.getListing().getInstructions(function.getBody(), true)) {
+            FlowType flow = instruction.getFlowType();
+            Address[] flows = instruction.getFlows();
+
+            if (flow.isCall()) {
+                Function called = flows.length == 1 ? getFunctionAt(flows[0]) : null;
+                called = called != null && called.isThunk() ? called.getThunkedFunction(true) : called;
+
+                if (classOfResult == null && called != null && holders.contains(first) && isMethod(called)) {
+                    classOfResult = called.getParentNamespace().getName(true);
+                }
+
+                for (String volatileRegister : VOLATILE_REGISTERS) {
+                    holders.remove(currentProgram.getRegister(volatileRegister).getBaseRegister());
+                }
+
+                continue;
+            }
+
+            boolean isMove = instruction.getMnemonicString().equalsIgnoreCase("MOV") && instruction.getNumOperands() == 2;
+            Register destination = isMove ? instruction.getRegister(0) : null;
+            Register source = isMove ? instruction.getRegister(1) : null;
+            String stackDestination = isMove && destination == null ? stackSlot(instruction, 0) : null;
+            String stackSource = isMove && source == null ? stackSlot(instruction, 1) : null;
+            boolean sourceHolds = source != null && source.getBitLength() == 64 && holders.contains(source.getBaseRegister())
+                || stackSource != null && stackHolders.contains(stackSource);
+            boolean isCopy = sourceHolds && (destination != null && destination.getBitLength() == 64 || stackDestination != null);
+
+            for (Object written : instruction.getResultObjects()) {
+                if (written instanceof Register register && !isCopy) {
+                    holders.remove(register.getBaseRegister());
+                }
+            }
+
+            if (stackDestination != null && !isCopy) {
+                stackHolders.remove(stackDestination);
+            }
+
+            if (isCopy && destination != null) {
+                holders.add(destination.getBaseRegister());
+            } else if (isCopy) {
+                stackHolders.add(stackDestination);
+            }
+
+            boolean tailCall = flow.isJump() && !flow.isConditional() && flows.length == 1 && !function.getBody().contains(flows[0]);
+
+            if (holders.contains(result) || tailCall && holders.contains(first)) {
+                return new FirstArgument(true, classOfResult);
+            }
+        }
+
+        return new FirstArgument(false, classOfResult);
+    }
+
+    // "qword ptr [RSP + 0x350]" for an 8-byte place on the stack, or null for anything else.
+    private String stackSlot(Instruction instruction, int operand) {
+        String text = instruction.getDefaultOperandRepresentation(operand);
+
+        return text.startsWith("qword ptr [RSP") || text.startsWith("qword ptr [RBP") ? text : null;
     }
 
     // __dynamic_cast(object, &From::typeinfo, &To::typeinfo, hint), so casts read as such everywhere.
@@ -699,9 +894,10 @@ public class MT2Apply extends GhidraScript {
             // (_ZNK...). Otherwise a function is fixed only when Ghidra gave it fewer parameters than its name has,
             // keeping whether Ghidra saw a "this".
             boolean isConst = mangledName(function).startsWith("_ZNK");
-            boolean isMethod = isMethod(function) && (isConst || "__thiscall".equals(function.getCallingConventionName()));
+            boolean isMethod = isMethod(function)
+                && (isConst || "__thiscall".equals(function.getCallingConventionName()) || readsRegisterPastName(function, types, 0));
             boolean matches = current.length == types.size() + (isMethod ? 1 : 0) && function.getSignatureSource() != SourceType.DEFAULT;
-            boolean missing = current.length < types.size() + (isMethod ? 1 : 0);
+            boolean missing = current.length < types.size() + (isMethod ? 1 : 0) || unfixed.contains(entry);
 
             if (matches || !missing) {
                 continue;
@@ -727,6 +923,60 @@ public class MT2Apply extends GhidraScript {
                 notes.add(function.getName(true) + ": its parameters couldn't be set from its name: " + problem.getMessage());
             }
         }
+    }
+
+    // A method's object comes in the first register, so its parameters sit one register later than its name alone
+    // says. A function that reads the register after its last named parameter before writing it has a "this"; one
+    // that reads "further" registers past it also takes the address for a class it returns by value.
+    private boolean readsRegisterPastName(Function function, List<DataType> types, int further) {
+        int position = types.size() + further;
+
+        if (position >= INTEGER_REGISTERS.length) {
+            return false;
+        }
+
+        DataType last = types.isEmpty() ? null : types.get(types.size() - 1);
+        boolean isFloat = last instanceof FloatDataType || last instanceof DoubleDataType;
+        Register wanted = currentProgram.getRegister(isFloat ? FLOAT_REGISTERS[position] : INTEGER_REGISTERS[position]).getBaseRegister();
+        Instruction instruction = getInstructionAt(function.getEntryPoint());
+
+        for (int count = 0; instruction != null && count < 64; count++) {
+            if (!clearsItself(instruction) && usesRegister(instruction.getInputObjects(), wanted)) {
+                return true;
+            }
+
+            FlowType flow = instruction.getFlowType();
+
+            if (usesRegister(instruction.getResultObjects(), wanted) || flow.isCall() || flow.isTerminal()) {
+                return false;
+            }
+
+            Address next = flow.isJump() && !flow.isConditional() && instruction.getFlows().length == 1
+                ? instruction.getFlows()[0] : instruction.getFallThrough();
+
+            instruction = next != null && function.getBody().contains(next) ? getInstructionAt(next) : null;
+        }
+
+        return false;
+    }
+
+    // xor ecx, ecx reads ecx only on paper.
+    private boolean clearsItself(Instruction instruction) {
+        String mnemonic = instruction.getMnemonicString().toUpperCase();
+        boolean clearing = mnemonic.equals("XOR") || mnemonic.equals("SUB") || mnemonic.equals("PXOR") || mnemonic.startsWith("XORP");
+
+        return clearing && instruction.getNumOperands() == 2 && instruction.getRegister(0) != null
+            && instruction.getRegister(0).equals(instruction.getRegister(1));
+    }
+
+    private boolean usesRegister(Object[] objects, Register wanted) {
+        for (Object object : objects) {
+            if (object instanceof Register register && register.getBaseRegister().equals(wanted)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private boolean isMethod(Function function) {
@@ -858,6 +1108,75 @@ public class MT2Apply extends GhidraScript {
     }
 
     // A function the decompiler sees return a class pointer says so in its signature, so its callers know it too.
+    // The engine's containers hand back a reference to an item (VS_Array.h: T& GetItem(int); VS_ArrayStore.h: T*&
+    // GetItem(int), const T* GetItemConst(int) const), which is its address in the machine code. Every copy's own T
+    // says what it points at, so what's read through it is that class's field: part->boneName, not *(lVar1 + 0x18).
+    private void typeContainerAccessors() throws Exception {
+        Pattern accessor = Pattern.compile("^(vsArray|vsVolatileArray|vsArrayStore|vsVolatileArrayStore|vsObjectArray)<(.+)>::(GetItem|GetItemConst|operator\\[\\])$");
+
+        for (Function function : currentProgram.getFunctionManager().getFunctions(true)) {
+            Matcher name = accessor.matcher(function.getName(true));
+
+            if (!name.matches() || function.getSignatureSource() == SourceType.DEFAULT) {
+                continue;
+            }
+
+            boolean store = !name.group(1).endsWith("Array");
+            boolean constant = name.group(3).equals("GetItemConst") || isConstMethod(function);
+            DataType returns = resolve(name.group(2) + (store && !constant ? "**" : "*"));
+            DataType current = function.getReturnType();
+
+            // An item that's only numbers (a vsMatrix4x4, a vsColor) is copied whole, which the decompiler shows as
+            // eight-byte moves; typed, it breaks each into its floats and the copy is unreadable.
+            if (!store && returns instanceof Pointer pointer && isOnlyNumbers(pointer.getDataType())) {
+                // The project keeps what an earlier run set.
+                if (current.isEquivalent(returns)) {
+                    function.setReturnType(Undefined8DataType.dataType, SourceType.ANALYSIS);
+                }
+
+                continue;
+            }
+
+            if (returns != null && (current instanceof Undefined || current == DataType.DEFAULT || current instanceof Pointer pointer && pointer.getDataType() == null)) {
+                function.setReturnType(returns, SourceType.ANALYSIS);
+                returnsTyped++;
+            }
+        }
+    }
+
+    private boolean isOnlyNumbers(DataType type) {
+        if (type instanceof TypeDef typeDef) {
+            return isOnlyNumbers(typeDef.getBaseDataType());
+        }
+
+        if (type instanceof Array array) {
+            return isOnlyNumbers(array.getDataType());
+        }
+
+        if (!(type instanceof Structure structure)) {
+            return type instanceof AbstractFloatDataType || type instanceof AbstractIntegerDataType;
+        }
+
+        for (DataTypeComponent component : structure.getDefinedComponents()) {
+            if (!isOnlyNumbers(component.getDataType())) {
+                return false;
+            }
+        }
+
+        return structure.getNumDefinedComponents() > 0;
+    }
+
+    // _ZNK: a const method, by its mangled name.
+    private boolean isConstMethod(Function function) {
+        for (Symbol symbol : currentProgram.getSymbolTable().getSymbols(function.getEntryPoint())) {
+            if (symbol.getName().startsWith("_ZNK")) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void typeReturns(JsonArray list) throws Exception {
         for (JsonElement element : list) {
             JsonObject item = element.getAsJsonObject();

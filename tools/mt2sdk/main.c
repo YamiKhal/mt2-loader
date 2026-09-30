@@ -29,6 +29,10 @@ static const char* USAGE =
     "  mt2sdk text <text> [more text]     texts in the game that contain the words, and where each is used\n"
     "  mt2sdk vtable <class>              a class's virtual functions, by slot\n"
     "  mt2sdk decompile [folder]          the game's code as C++ source files, made with Ghidra (mt2-workspace)\n"
+    "  mt2sdk decompile [folder] --file <MMO_District.cpp>  only that file again, in about a minute\n"
+    "  mt2sdk decompile [folder] --export  every file again, over the names and types the last run worked out\n"
+    "  mt2sdk stats [folder]              how much of the rebuilt source still reads like machine code\n"
+    "  mt2sdk snapshot save|check [folder]  keep a few rebuilt files, and see what a change does to them\n"
     "  mt2sdk reference [folder]          a page per class (fields, functions, enums) without the game's code, to share\n"
     "  mt2sdk diff <old MT2.exe>          what changed in a game update, and which mapped facts moved\n"
     "  mt2sdk symbols [file] / program [file]  every name, or everything above as JSON, for other tools\n"
@@ -37,6 +41,10 @@ static const char* USAGE =
     "  mt2sdk mappings check <folder>     check the files against the game\n"
     "  mt2sdk mappings pull [workspace] --mappings <folder>  add what you named in the workspace's Ghidra project\n"
     "  mt2sdk mappings import <found.json> <folder>  the same from a file MT2Import.java wrote\n"
+    "  mt2sdk mappings name <class> <0xoffset> <name> <type> [workspace] --mappings <folder>  name a field: writes it with\n"
+    "                                     where the code uses it, checks it and rebuilds the file that uses it most\n"
+    "  mt2sdk mappings todo [workspace] [class]  the unnamed fields the most code uses, to name first\n"
+    "  mt2sdk mappings cards [workspace] [class]  each of those with its neighbors and the lines that use it\n"
     "  mt2sdk mappings json <folder> [file]  the mappings as one JSON file, for other tools\n"
     "\n"
     "Options: --exe <path to MT2.exe> (found in the Steam libraries otherwise), --mappings <mt2-mappings folder>,\n"
@@ -70,6 +78,11 @@ int wmain(int argc, wchar_t** argv) {
     const wchar_t* ghidra = take_option(&count, argv, L"--ghidra", 1);
     const wchar_t* mappings = take_option(&count, argv, L"--mappings", 1);
     bool everything = take_option(&count, argv, L"--all", 0) != NULL;
+    const wchar_t* only_file = take_option(&count, argv, L"--file", 1);
+
+    if (take_option(&count, argv, L"--export", 0) != NULL) {
+        only_file = L"*";
+    }
 
     if (count < 2) {
         fputs(USAGE, stdout);
@@ -154,8 +167,16 @@ int wmain(int argc, wchar_t** argv) {
         return command_enum(exe, first);
     }
 
+    if (wcscmp(command, L"stats") == 0) {
+        return command_stats(first != NULL ? first : L"mt2-workspace");
+    }
+
+    if (wcscmp(command, L"snapshot") == 0 && first != NULL && (wcscmp(first, L"save") == 0 || wcscmp(first, L"check") == 0)) {
+        return command_snapshot(first, second != NULL ? second : L"mt2-workspace", exe, ghidra, mappings);
+    }
+
     if (wcscmp(command, L"decompile") == 0) {
-        return command_decompile(exe, first != NULL ? first : L"mt2-workspace", ghidra, mappings, everything);
+        return command_decompile(exe, first != NULL ? first : L"mt2-workspace", ghidra, mappings, everything, only_file);
     }
 
     if (wcscmp(command, L"mappings") == 0 && first != NULL && wcscmp(first, L"import") == 0 && second != NULL && third != NULL) {
@@ -164,6 +185,18 @@ int wmain(int argc, wchar_t** argv) {
 
     if (wcscmp(command, L"mappings") == 0 && first != NULL && wcscmp(first, L"pull") == 0 && mappings != NULL) {
         return command_mappings_pull(exe, second != NULL ? second : L"mt2-workspace", mappings, ghidra);
+    }
+
+    if (wcscmp(command, L"mappings") == 0 && first != NULL && wcscmp(first, L"cards") == 0) {
+        return command_mappings_cards(second != NULL ? second : L"mt2-workspace", third);
+    }
+
+    if (wcscmp(command, L"mappings") == 0 && first != NULL && wcscmp(first, L"name") == 0 && count > 6 && mappings != NULL) {
+        return command_mappings_name(exe, count > 7 ? argv[7] : L"mt2-workspace", mappings, ghidra, argv[3], argv[4], argv[5], argv[6]);
+    }
+
+    if (wcscmp(command, L"mappings") == 0 && first != NULL && wcscmp(first, L"todo") == 0) {
+        return command_mappings_todo(second != NULL ? second : L"mt2-workspace", third);
     }
 
     if (wcscmp(command, L"mappings") == 0 && first != NULL && wcscmp(first, L"check") == 0 && second != NULL) {

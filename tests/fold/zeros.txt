@@ -1,0 +1,18 @@
+{
+  char acStack_1d8 [16];
+
+  acStack_1d8[0] = '\0';
+  acStack_1d8[1] = '\0';
+  acStack_1d8[2] = '\0';
+  acStack_1d8[3] = '\0';
+  acStack_1d8[4] = '\0';
+  acStack_1d8[5] = 1;
+  acStack_1d8[6] = '\0';
+  acStack_1d8[7] = '\0';
+  acStack_1d8[8] = '\0';
+  acStack_1d8[9] = '\0';
+  acStack_1d8[10] = '\0';
+  acStack_1d8[0xb] = '\0';
+  f(acStack_1d8);
+  return;
+}

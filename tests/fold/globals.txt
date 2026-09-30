@@ -1,0 +1,18 @@
+{
+  allocator *allocator;
+  string text;
+  string text2;
+
+  vsPropertyBase::vsPropertyBase((vsPropertyBase *)&mmoCostume::s_nameProperty,"name",false);
+  _DAT_1413b59b8 = 0x18;
+  atexit(::__tcf_0);
+  if (vsObject<mmoCostumeDefaults,vsNullObject>::s_RTTI == '\0') {
+    vsObject<mmoCostumeDefaults,vsNullObject>::s_RTTI = '\x01';
+    std::string::string<std::allocator<char>>(&text2,"12vsNullObject",allocator);
+    std::string::string<std::allocator<char>>(&text,"18mmoCostumeDefaults",allocator);
+    vsRTTI::vsRTTI((vsRTTI *)&vsObject<mmoCostumeDefaults,vsNullObject>::s_RTTI,&text,&text2);
+    atexit(::__tcf_3);
+  }
+  ::__static_initialization_and_destruction_1();
+  return;
+}

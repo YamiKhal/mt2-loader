@@ -789,7 +789,7 @@ test_ghidra_folds() {
     fi
 
     rm -rf "$out" && mkdir -p "$out"
-    "$javac" -nowarn -d "$(cygpath -w "$out")" tools/ghidra/MT2Fold.java tests/fold/FoldCheck.java 2> /dev/null
+    "$javac" -nowarn -d "$(cygpath -w "$out")" tools/ghidra/MT2Fold.java tools/ghidra/MT2Idioms.java tests/fold/FoldCheck.java 2> /dev/null
     local folded
     folded="$("${java_bin:+$java_bin/}java" -cp "$(cygpath -w "$out")" FoldCheck tests/fold/decompiled.txt)"
 
@@ -802,6 +802,51 @@ test_ghidra_folds() {
     check "folds: a dynamic_cast over two lines" grep -qF 'pvVar6 = dynamic_cast<mmoScenery*>(*(void **)(local_280 + lVar18 * 8));' <<< "$folded"
     check "folds: a local vsArray's cleanup is left out" bash -c '! grep -q "PTR__vsArray" <<< "$1"' _ "$folded"
     check "folds: unused locals are left out" bash -c '! grep -q "uStack_220" <<< "$1"' _ "$folded"
+
+    local bounds
+    bounds="$("${java_bin:+$java_bin/}java" -cp "$(cygpath -w "$out")" FoldCheck tests/fold/bounds.txt)"
+    check "folds: a copied-in assert with a made message is vsAssertF" grep -qF 'vsAssertF(id >= 0 && id < m_arrayLength, "Out of bounds vsArray access: requested element %d, capacity of %d (array of %s)", index, *(int *)(lVar2 + 0x108), "vsColor"); // VS_Array.h line 260' <<< "$bounds"
+    local format
+    format="$("${java_bin:+$java_bin/}java" -cp "$(cygpath -w "$out")" FoldCheck tests/fold/format.txt)"
+    check "folds: text made with tinyformat is vsFormatString" grep -qF 'local_1e8 = vsFormatString("MessageTo Camera FocusOn %d", this->uid);' <<< "$format"
+
+    local destructor globals
+    destructor="$("${java_bin:+$java_bin/}java" -cp "$(cygpath -w "$out")" FoldCheck tests/fold/destructor.txt "mmoCostume::~mmoCostume")"
+    globals="$("${java_bin:+$java_bin/}java" -cp "$(cygpath -w "$out")" FoldCheck tests/fold/globals.txt "_GLOBAL__sub_I_s_nameProperty")"
+    check "folds: a destructor leaves out its members' own cleanup" bash -c '! grep -q "operator_delete\|~vsNullObject\|actorName" <<< "$1"' _ "$destructor"
+    check "folds: a container deleting its items is delete, in a for loop" grep -qF 'for (index = 0; index < count; index++) {' <<< "$destructor"
+    check "folds: an item deleted through its vtable is delete" grep -qF 'delete items2[index];' <<< "$destructor"
+    check "folds: a property is the global it sets up" grep -qF 'mmoCostume::s_nameProperty = vsPropertyBase("name",false); // the field at +0x18' <<< "$globals"
+    check "folds: the compiler's type info and atexit are left out" bash -c '! grep -q "s_RTTI\|atexit\|__static_init" <<< "$1"' _ "$globals"
+
+    local constructor
+    constructor="$("${java_bin:+$java_bin/}java" -cp "$(cygpath -w "$out")" FoldCheck tests/fold/constructor.txt "mmoCostume::mmoCostume")"
+    check "folds: a constructor leaves out the default constructors C++ calls by itself" bash -c '! grep -q "vsNullObject" <<< "$1"' _ "$constructor"
+    check "folds: a base constructor given values stays" grep -qF 'mmoWindow::mmoWindow((mmoWindow *)this,"Costume");' <<< "$constructor"
+    check "folds: a loop after other statements in its guard is a for loop" grep -qF 'for (index = 0; index < count; index++) {' <<< "$constructor"
+
+    local copied
+    copied="$("${java_bin:+$java_bin/}java" -cp "$(cygpath -w "$out")" FoldCheck tests/fold/copied_text.txt)"
+    check "folds: formatted text copied out by hand is vsFormatString" grep -qF 'text = vsFormatString("colorSlot[%d]", index);' <<< "$copied"
+    check "folds: a counted do-while is a for loop" grep -qF 'for (index = 0; index < 8; index++) {' <<< "$copied"
+
+    local zeros
+    zeros="$("${java_bin:+$java_bin/}java" -cp "$(cygpath -w "$out")" FoldCheck tests/fold/zeros.txt)"
+    check "folds: bytes cleared one by one are memset" grep -qF 'memset(acStack_1d8 + 6, 0, 6);' <<< "$zeros"
+
+    check "folds: the message's stream and strings are left out" bash -c '! grep -q "ostringstream\|local_288\|Demangle" <<< "$1"' _ "$bounds"
+
+    local singleton
+    singleton="$("${java_bin:+$java_bin/}java" -cp "$(cygpath -w "$out")" FoldCheck tests/fold/singleton.txt)"
+
+    check "folds: a singleton's lookup is Instance()" grep -qF '*(int *)(vsSingleton<mmoClock>::Instance() + 0x44);' <<< "$singleton"
+    check "folds: the lookup and its assert are left out" bash -c '! grep -qE "VS_Singleton.h|LAB_140419931|pvVar1" <<< "$1"' _ "$singleton"
+
+    local formatted
+    formatted="$("${java_bin:+$java_bin/}java" -cp "$(cygpath -w "$out")" FoldCheck tests/fold/formatted.txt)"
+
+    check "folds: a formatted message is vsAssertF" grep -qF 'vsAssertF(adjustment >= 0.f, "Setting a %f adjustment on a positive-type attribute effect??", local_res10);' <<< "$formatted"
+    check "folds: the message's string is left out" bash -c '! grep -qE "tinyformat|operator_delete|local_38" <<< "$1"' _ "$formatted"
 }
 
 

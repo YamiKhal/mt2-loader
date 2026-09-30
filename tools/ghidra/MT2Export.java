@@ -3,7 +3,8 @@
 // exe has them in, which follows the original files. Uses what MT2Apply taught Ghidra (fields, enums, mappings), the
 // exact C++ parameter types from the exe's mangled names, and names locals after what they hold.
 // Arguments: the output folder, program.json (mt2sdk program), mappings.json or "-", "game" (the game's and engine's
-// own code) or "all", and optionally a text a file's path must have (MMO_Quest) to export only those files.
+// own code) or "all", and optionally the source files to write alone, with commas between (MMO_District.cpp, or its
+// path when the name repeats).
 // @category MT2
 
 import com.google.gson.JsonArray;
@@ -11,6 +12,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ghidra.app.decompiler.ClangFieldToken;
+import ghidra.app.decompiler.ClangNode;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.DecompileResults;
@@ -21,6 +24,10 @@ import ghidra.app.script.GhidraScript;
 import ghidra.app.util.demangler.DemangledObject;
 import ghidra.app.util.demangler.DemanglerUtil;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.DataTypeComponent;
+import ghidra.program.model.data.Structure;
+import ghidra.program.model.data.Undefined;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Parameter;
 import ghidra.program.model.symbol.Namespace;
@@ -47,6 +54,7 @@ public class MT2Export extends GhidraScript {
 
     private static final int TIMEOUT_SECONDS = 60;
     private static final String TEMPLATES = "_templates/";
+    private static final Set<String> LIBRARIES = Set.of("std", "__gnu_cxx", "__cxxabiv1", "tinyformat", "physfs", "SDL");
 
     private static final Pattern GHIDRA_LOCAL = Pattern.compile(
         "^(?:[a-z]{1,4}Var\\d+|this_\\d+|local_[0-9a-f]+|local_[A-Z0-9]+_[0-9a-f]+|[a-z]{1,3}Stack_[0-9a-f]+|in_\\w+|extraout_\\w+|unaff_\\w+|param_\\d+)$");
@@ -57,12 +65,22 @@ public class MT2Export extends GhidraScript {
         "private", "public", "protected", "virtual", "friend", "namespace", "using", "true", "false", "sizeof", "auto");
     private static final String[][] TYPE_WORDS = {
         { "ulonglong", "unsigned long long" }, { "longlong", "long long" }, { "uint", "unsigned int" },
-        { "ushort", "unsigned short" }, { "uchar", "unsigned char" }, { "undefined8", "uint64_t" },
-        { "undefined4", "uint32_t" }, { "undefined2", "uint16_t" }, { "undefined1", "uint8_t" }, { "undefined", "uint8_t" },
-        { "byte", "uint8_t" }, { "sbyte", "int8_t" }, { "qword", "uint64_t" }, { "dword", "uint32_t" }, { "word", "uint16_t" },
+        { "ushort", "unsigned short" }, { "uchar", "unsigned char" },
+        // Ghidra's undefinedN is N bytes whose type nobody knows yet: the plain type of that size (int is 4 bytes, long
+        // long 8; long is only 4 on Windows, so it's never used here).
+        { "undefined8", "long long" }, { "undefined4", "int" }, { "undefined2", "short" }, { "undefined1", "char" },
+        { "undefined", "char" }, { "byte", "char" }, { "sbyte", "signed char" }, { "qword", "long long" }, { "dword", "int" },
+        { "word", "short" },
     };
 
-    private record Decompiled(Function function, String code) {}
+    private static final Pattern UNNAMED_FIELD = Pattern.compile("^field\\d*_0x[0-9a-f]+$");
+    private static final String UNNAMED_FIELDS = "unnamed_fields.tsv";
+    private static final int MAX_USERS_LISTED = 5;
+
+    // A field nobody has named, as one function reads or writes it: its class, offset and type.
+    private record FieldUse(String owner, int offset, String type) {}
+
+    private record Decompiled(Function function, String code, List<FieldUse> unnamed) {}
 
     private static class SourceFile {
         String name;
@@ -95,8 +113,9 @@ public class MT2Export extends GhidraScript {
     private final Map<Function, String> signatures = new HashMap<>();
     private final Map<Function, String> returnTypes = new HashMap<>();
     private String build = "";
-    // Only the files whose path has this in it (for trying the export on a few files), or null for all.
-    private String onlyPathsWith;
+    private final Map<String, Map<String, Integer>> classVotes = new HashMap<>();
+    // The files to write (after a change to the mappings or the scripts), or null for all.
+    private Set<String> onlyFiles;
 
     @Override
     public void run() throws Exception {
@@ -105,9 +124,8 @@ public class MT2Export extends GhidraScript {
         File programFile = arguments.length > 1 ? new File(arguments[1]) : askFile("program.json from mt2sdk program", "Use");
         File mappingsFile = arguments.length > 2 && !arguments[2].equals("-") ? new File(arguments[2]) : null;
         boolean everything = arguments.length > 3 && arguments[3].equals("all");
-        onlyPathsWith = arguments.length > 4 ? arguments[4] : null;
-
         readProgram(readJson(programFile));
+        onlyFiles = arguments.length > 4 ? findOnlyFiles(arguments[4]) : null;
 
         if (mappingsFile != null) {
             readMappedFields(readJson(mappingsFile));
@@ -217,9 +235,13 @@ public class MT2Export extends GhidraScript {
 
             SourceFile file = fileOf(function);
             boolean gamesOwn = file != null && !file.path.isEmpty();
-            boolean wanted = onlyPathsWith == null || (file != null && (file.path + file.name).contains(onlyPathsWith));
+            String path = outputPath(function);
 
-            if ((everything || gamesOwn) && wanted) {
+            if (everything || gamesOwn) {
+                voteForHome(function, path);
+            }
+
+            if ((everything || gamesOwn) && (onlyFiles == null || onlyFiles.contains(path))) {
                 chosen.add(function);
             }
 
@@ -237,6 +259,98 @@ public class MT2Export extends GhidraScript {
         return chosen;
     }
 
+    // The decompiler's own tokens know which structure and offset each "->field_0x4c" is.
+    private void collectUnnamedFields(ClangNode node, List<FieldUse> into) {
+        if (node instanceof ClangFieldToken field && field.getDataType() instanceof Structure structure
+            && UNNAMED_FIELD.matcher(field.getText()).matches()) {
+            DataTypeComponent component = structure.getComponentContaining(field.getOffset());
+            DataType type = component != null ? component.getDataType() : null;
+            String typeName = type == null || type == DataType.DEFAULT || type instanceof Undefined ? "?" : cleanType(types(type.getDisplayName()));
+
+            into.add(new FieldUse(className(structure), field.getOffset(), typeName));
+        }
+
+        for (int index = 0; index < node.numChildren(); index++) {
+            collectUnnamedFields(node.Child(index), into);
+        }
+    }
+
+    // A class's structure sits in a folder named after the namespace it's in: /Demangler/mmoNPC/Advert is mmoNPC::Advert.
+    private String className(Structure structure) {
+        String name = types(structure.getName());
+        String folder = structure.getCategoryPath().getPath();
+
+        if (folder.startsWith("/Demangler/")) {
+            return cleanType(types(folder.substring("/Demangler/".length()).replace("/", "::") + "::" + name));
+        }
+
+        return name;
+    }
+
+    // Each function goes to its source file; code the compiler made from a template (vsProperty<int, mmoNPC>::Type)
+    // goes to _templates/vsProperty.cpp, beside the other copies of that template.
+    private String outputPath(Function function) {
+        SourceFile file = fileOf(function);
+        String template = templateOf(function);
+
+        if (template != null) {
+            return TEMPLATES + safe(template) + ".cpp";
+        }
+
+        // A library's function the compiler copied into a game file (std::ios::widen, specialized for it): the library's
+        // code, not the game's.
+        String root = function.getName(true).split("::")[0];
+
+        if (LIBRARIES.contains(root)) {
+            return "_library/" + safe(root) + ".cpp";
+        }
+
+        return file != null && !file.path.isEmpty() ? file.path : "_other/" + (file != null ? safe(file.name) : "unknown.cpp");
+    }
+
+    // A class is declared in the header beside the .cpp that has most of its functions. Every function votes, so a
+    // single file's export declares the same classes as the whole one.
+    private void voteForHome(Function function, String path) {
+        String owner = ownerClass(function);
+
+        if (owner != null && templateOf(function) == null) {
+            classVotes.computeIfAbsent(owner, key -> new HashMap<>()).merge(path, 1, Integer::sum);
+        }
+    }
+
+    // "MMO_District.cpp,_templates/vsArray" names Games/MMORPG/MapObjects/MMO_District.cpp and _templates/vsArray.cpp:
+    // a file's name, or as much of its path as tells it apart.
+    private Set<String> findOnlyFiles(String givenList) throws Exception {
+        Set<String> paths = new java.util.TreeSet<>();
+        Set<String> chosen = new java.util.TreeSet<>();
+
+        for (Function function : currentProgram.getFunctionManager().getFunctions(true)) {
+            paths.add(outputPath(function));
+        }
+
+        for (String given : givenList.split(",")) {
+            String wanted = given.trim().replace('\\', '/');
+            List<String> found = new ArrayList<>();
+
+            for (String path : paths) {
+                String withoutExtension = path.replaceAll("\\.(cpp|c|cc)$", "");
+
+                if (path.equals(wanted) || withoutExtension.equals(wanted) || path.endsWith("/" + wanted) || withoutExtension.endsWith("/" + wanted)) {
+                    found.add(path);
+                }
+            }
+
+            if (found.size() != 1) {
+                throw new IllegalArgumentException(found.isEmpty() ? "No source file is called " + wanted
+                    : wanted + " could be any of: " + String.join(", ", found));
+            }
+
+            chosen.add(found.get(0));
+        }
+
+        return chosen;
+    }
+
     private SourceFile fileOf(Function function) {
         Integer index = fileOfFunction.get(function.getEntryPoint().getOffset());
 
@@ -247,10 +361,16 @@ public class MT2Export extends GhidraScript {
         DecompilerCallback<Decompiled> callback = new DecompilerCallback<>(currentProgram, new Configurer()) {
             @Override
             public Decompiled process(DecompileResults results, TaskMonitor monitor) {
-                String code = results.decompileCompleted() ? results.getDecompiledFunction().getC()
+                boolean completed = results.decompileCompleted();
+                String code = completed ? results.getDecompiledFunction().getC()
                     : "{\n  // Ghidra couldn't decompile this function: " + results.getErrorMessage() + "\n}\n";
+                List<FieldUse> unnamed = new ArrayList<>();
 
-                return new Decompiled(results.getFunction(), code);
+                if (completed) {
+                    collectUnnamedFields(results.getCCodeMarkup(), unnamed);
+                }
+
+                return new Decompiled(results.getFunction(), code, unnamed);
             }
         };
         callback.setTimeout(TIMEOUT_SECONDS);
@@ -262,38 +382,29 @@ public class MT2Export extends GhidraScript {
         }
     }
 
-    // Each function goes to its source file; code the compiler made from a template (vsProperty<int, mmoNPC>::Type)
-    // goes to _templates/vsProperty.cpp, beside the other copies of that template.
     private Map<String, Output> arrange(List<Decompiled> results) {
         Map<String, Output> outputs = new TreeMap<>();
-        Map<String, Map<String, Integer>> classVotes = new HashMap<>();
 
         for (Decompiled result : results) {
             Function function = result.function();
             SourceFile file = fileOf(function);
-            String template = templateOf(function);
-            String path = template != null ? TEMPLATES + safe(template) + ".cpp"
-                : file != null && !file.path.isEmpty() ? file.path : "_other/" + (file != null ? safe(file.name) : "unknown.cpp");
-            Output out = outputs.computeIfAbsent(path, key -> {
+            boolean isTemplate = templateOf(function) != null;
+            Output out = outputs.computeIfAbsent(outputPath(function), key -> {
                 Output created = new Output();
                 created.path = key;
-                created.guessed = template == null && file != null && file.guessed;
+                created.guessed = !isTemplate && file != null && file.guessed;
                 return created;
             });
 
             out.functions.add(result);
-
-            String owner = ownerClass(function);
-
-            if (owner != null && template == null) {
-                classVotes.computeIfAbsent(owner, key -> new HashMap<>()).merge(path, 1, Integer::sum);
-            }
         }
 
-        // A class is declared in the header beside the .cpp that has most of its functions.
         for (Map.Entry<String, Map<String, Integer>> vote : classVotes.entrySet()) {
             String best = vote.getValue().entrySet().stream().max(Map.Entry.comparingByValue()).get().getKey();
-            outputs.get(best).classes.add(vote.getKey());
+
+            if (outputs.containsKey(best)) {
+                outputs.get(best).classes.add(vote.getKey());
+            }
         }
 
         return outputs;
@@ -337,10 +448,69 @@ public class MT2Export extends GhidraScript {
             }
         }
 
+        writeUnnamedFields(root, outputs);
+
+        // Some files' export leaves the rest of the folder as the whole export wrote it.
+        if (onlyFiles != null) {
+            println("Wrote " + String.join(", ", onlyFiles) + " (" + functionCount + " functions)");
+
+            return;
+        }
+
         Files.writeString(root.resolve("Enums.h"), enumsFile(), StandardCharsets.UTF_8);
         Files.writeString(root.resolve("index.txt"), index.toString(), StandardCharsets.UTF_8);
         Files.writeString(root.resolve("README.md"), readme(outputs.size(), functionCount), StandardCharsets.UTF_8);
         println("Wrote " + functionCount + " functions in " + outputs.size() + " files, with index.txt and README.md");
+    }
+
+    // For "mt2sdk mappings todo": a line per unnamed field and file, with how often and in how many functions it's used
+    // there, and the first few of them. Some files' export replaces only their lines.
+    private void writeUnnamedFields(Path root, Map<String, Output> outputs) throws Exception {
+        Path path = root.resolve(UNNAMED_FIELDS);
+        List<String> lines = new ArrayList<>();
+
+        if (onlyFiles != null && Files.exists(path)) {
+            for (String line : Files.readAllLines(path, StandardCharsets.UTF_8)) {
+                String[] columns = line.split("\t");
+
+                if (columns.length > 3 && !onlyFiles.contains(columns[3])) {
+                    lines.add(line);
+                }
+            }
+        }
+
+        for (Output out : outputs.values()) {
+            Map<String, int[]> counts = new TreeMap<>();
+            Map<String, List<String>> users = new HashMap<>();
+
+            for (Decompiled result : out.functions) {
+                Set<String> inThisFunction = new HashSet<>();
+
+                for (FieldUse use : result.unnamed()) {
+                    String key = use.owner() + "\t0x" + Integer.toHexString(use.offset()) + "\t" + use.type();
+                    int[] count = counts.computeIfAbsent(key, ignored -> new int[2]);
+
+                    count[0]++;
+
+                    List<String> functions = users.computeIfAbsent(key, ignored -> new ArrayList<>());
+
+                    if (inThisFunction.add(key)) {
+                        count[1]++;
+
+                        if (functions.size() < MAX_USERS_LISTED) {
+                            functions.add(result.function().getName(true));
+                        }
+                    }
+                }
+            }
+
+            for (Map.Entry<String, int[]> count : counts.entrySet()) {
+                lines.add(count.getKey() + "\t" + out.path + "\t" + count.getValue()[0] + "\t" + count.getValue()[1] + "\t"
+                    + String.join(";", users.get(count.getKey())));
+            }
+        }
+
+        Files.writeString(path, lines.isEmpty() ? "" : String.join("\n", lines) + "\n", StandardCharsets.UTF_8);
     }
 
     private String headerPath(String cppPath) {
@@ -366,20 +536,46 @@ public class MT2Export extends GhidraScript {
             text.append("\n#include \"").append(header).append("\"\n");
         }
 
+        boolean isTemplate = out.path.startsWith(TEMPLATES);
+        List<String> bodies = new ArrayList<>();
+
         for (Decompiled result : out.functions) {
-            Function function = result.function();
-            String body = cppFunction(function, result.code());
+            bodies.add(cppFunction(result.function(), result.code()));
+        }
+
+        for (int position = 0; position < out.functions.size(); position++) {
+            Function function = out.functions.get(position).function();
+            String body = bodies.get(position);
             String variant = variantNote(function);
-            String withoutAddress = body.replaceAll("LAB_[0-9a-f]+", "LAB");
-            String earlier = seenBodies.putIfAbsent(withoutAddress, function.getEntryPoint().toString());
 
             index.append("0x").append(function.getEntryPoint()).append("  ").append(function.getName(true)).append("  ")
                 .append(out.path).append("\n");
+
+            // The compiler's own: a global's destructor handed to atexit, a file's setup with nothing of the source's left.
+            if (function.getName().startsWith("__tcf_") || MT2Idioms.isGlobalSetup(function.getName(true)) && MT2Idioms.isEmpty(bodyOf(body))) {
+                continue;
+            }
+
+            String destroyer = deletingDestructorNote(out, bodies, position, variant);
+
+            if (destroyer != null) {
+                text.append("\n// 0x").append(function.getEntryPoint()).append(" ").append(destroyer).append("\n");
+                continue;
+            }
+
+            String earlier = seenBodies.putIfAbsent(comparable(body, function, isTemplate), function.getEntryPoint().toString());
 
             text.append("\n// 0x").append(function.getEntryPoint());
 
             if (variant != null) {
                 text.append(" (").append(variant).append(")");
+            }
+
+            // A template's copy for another type: only its name says which.
+            if (earlier != null && isTemplate) {
+                text.append(" ").append(function.getName(true).replace("[abi:cxx11]", "")).append(": the same code as 0x").append(earlier)
+                    .append(" above, for its own types\n");
+                continue;
             }
 
             if (earlier != null) {
@@ -391,6 +587,88 @@ public class MT2Export extends GhidraScript {
         }
 
         return text.toString();
+    }
+
+    // What's between a function's first "{" and its end (its comment and signature come before).
+    private String bodyOf(String function) {
+        int open = function.indexOf("\n{");
+
+        return open < 0 ? function : function.substring(open + 1);
+    }
+
+    // A deleting destructor is the class's destructor and then operator_delete(this, size): said in a line, when the
+    // file has that destructor with the same code. Null otherwise.
+    private String deletingDestructorNote(Output out, List<String> bodies, int position, String variant) {
+        if (variant == null || !variant.startsWith("deleting destructor")) {
+            return null;
+        }
+
+        Function function = out.functions.get(position).function();
+        Matcher free = Pattern.compile("(?m)^\\s*operator_delete\\(this,\\s*(0x[0-9a-f]+|\\d+)\\);\\n").matcher(bodyOf(bodies.get(position)));
+
+        if (!free.find()) {
+            return null;
+        }
+
+        String destroys = sameLines(free.replaceFirst(""));
+
+        for (int other = 0; other < out.functions.size(); other++) {
+            Function candidate = out.functions.get(other).function();
+
+            if (other != position && candidate.getName(true).equals(function.getName(true)) && sameLines(bodyOf(bodies.get(other))).equals(destroys)) {
+                long size = free.group(1).startsWith("0x") ? Long.parseLong(free.group(1).substring(2), 16) : Long.parseLong(free.group(1));
+
+                return function.getName(true) + " (deleting destructor): the destructor at 0x" + candidate.getEntryPoint() + ", then frees its "
+                    + size + " bytes";
+            }
+        }
+
+        return null;
+    }
+
+    private String sameLines(String body) {
+        return body.replaceAll("LAB_[0-9a-f]+", "LAB").replaceAll("\\n\\s*\\n", "\n").trim();
+    }
+
+    // The body as it's compared with the ones before it: labels' addresses don't count, and in a template's copy
+    // neither do its own type arguments (vsObject<mmoNPC, mmoCharacter> writes mmoNPC where vsObject<mmoZone, ...>
+    // writes mmoZone), its name, nor the addresses of the data each copy has for itself.
+    private String comparable(String body, Function function, boolean isTemplate) {
+        String result = body.replaceAll("LAB_[0-9a-f]+", "LAB");
+
+        if (!isTemplate) {
+            return result;
+        }
+
+        String owner = ownerClass(function);
+        List<String> arguments = new ArrayList<>();
+
+        if (owner != null && owner.contains("<")) {
+            arguments.add(owner);
+            arguments.addAll(splitParameters(owner.substring(owner.indexOf('<') + 1, owner.lastIndexOf('>'))));
+        }
+
+        // Numbered by place, replaced longest first, so mmoNPC inside vsObject<mmoNPC, ...> doesn't break the whole.
+        List<Integer> order = new ArrayList<>();
+
+        for (int index = 0; index < arguments.size(); index++) {
+            order.add(index);
+        }
+
+        order.sort(Comparator.comparingInt((Integer index) -> arguments.get(index).length()).reversed());
+        result = result.replace(function.getName(true).replace("[abi:cxx11]", ""), "SELF");
+
+        for (int index : order) {
+            String argument = arguments.get(index).trim();
+
+            if (argument.length() > 2) {
+                result = result.replace(argument, "T" + index).replace(argument.replace(" ", ""), "T" + index)
+                    .replace(argument.replace(" ", "_"), "T" + index);
+            }
+        }
+
+        // The mangled spelling in type names: 8mmoClock and 10mmoMonster are both a length and T.
+        return result.replaceAll("\\d+T(\\d)", "T$1").replaceAll("\\b(?:DAT|PTR|FUN|s)_[0-9a-f]+", "ADDRESS");
     }
 
     // GCC makes several copies of constructors and destructors, and splits some functions in two; the mangled name
@@ -449,25 +727,49 @@ public class MT2Export extends GhidraScript {
         String signature = cppSignature(function, renames);
         String comment = plateComment(prelude);
 
+        // The compiler's name for the code setting up a file's globals, which no class owns and which returns nothing.
+        if (MT2Idioms.isGlobalSetup(function.getName(true))) {
+            signature = "// Runs once when the game starts: sets up this file's globals.\nvoid " + function.getName().replace("[abi:cxx11]", "") + "()";
+        }
+
+        body = withoutWarnings(body);
         body = types(body);
-        body = foldedOrAsIs(body);
+        body = foldedOrAsIs(body, function.getName(true));
         body = operators(body);
         // In a function returning a class by value, the object is the parameter after the result.
         if (byValue.getOrDefault(function.getName(true), false)) {
             body = body.replaceAll("\\bself\\b", "this");
         }
 
+        body = virtualCalls(body, ownerClass(function));
         body = methodCalls(body, ownerClass(function));
         body = nameLocals(body, renames);
         body = renameAll(body, renames);
+
+        // GCC's [abi:cxx11] tag is on any function whose result names std::string, a const std::string& too: one whose
+        // every return hands back an address returns a reference.
+        Matcher returned = Pattern.compile("(?m)^\\s*return (.+);$").matcher(body);
+        boolean allAddresses = returned.find();
+
+        returned.reset();
+
+        while (allAddresses && returned.find()) {
+            allAddresses = returned.group(1).startsWith("&");
+        }
+
+        if (allAddresses && signature.startsWith("std::string ")) {
+            signature = "const std::string& " + signature.substring("std::string ".length());
+            body = body.replaceAll("(?m)^(\\s*return )&", "$1");
+            signatures.computeIfPresent(function, (key, declared) -> "const std::string& " + declared.substring("std::string ".length()));
+        }
 
         return comment + signature + "\n" + body.replaceAll("\n{3,}", "\n\n");
     }
 
     // Folding reads patterns in the text; a function it trips over is written as the decompiler gave it.
-    private String foldedOrAsIs(String body) {
+    private String foldedOrAsIs(String body, String functionName) {
         try {
-            return MT2Fold.fold(body);
+            return MT2Fold.fold(body, functionName);
         } catch (RuntimeException problem) {
             return body;
         }
@@ -504,29 +806,32 @@ public class MT2Export extends GhidraScript {
         }
     }
 
-    // The comment Ghidra puts before the function: the mappings' notes. Its demangled-name line is left out, since the
-    // signature now says the same.
+    // The comments Ghidra puts before the function: the mappings' notes. Its demangled name (the signature says the
+    // same) and its own warnings are left out.
     private String plateComment(String prelude) {
-        int start = prelude.indexOf("/*");
-        int end = prelude.lastIndexOf("*/");
-
-        if (start < 0 || end < 0) {
-            return "";
-        }
-
-        String inside = prelude.substring(start + 2, end).trim();
-
-        if (inside.isEmpty() || inside.matches("[\\w:~<>, *&\\[\\]]+\\(.*\\)( const)?")) {
-            return "";
-        }
-
         StringBuilder comment = new StringBuilder();
+        Matcher block = Pattern.compile("/\\*(.*?)\\*/", Pattern.DOTALL).matcher(prelude);
 
-        for (String line : inside.split("\n")) {
-            comment.append("// ").append(line.trim()).append("\n");
+        while (block.find()) {
+            String inside = block.group(1).trim();
+
+            if (inside.isEmpty() || inside.startsWith("WARNING") || inside.matches("[\\w:~<>, *&\\[\\]]+\\(.*\\)( const)?( \\[clone [^\\]]*\\])*")) {
+                continue;
+            }
+
+            for (String line : inside.split("\n")) {
+                comment.append("// ").append(line.trim()).append("\n");
+            }
         }
 
         return comment.toString();
+    }
+
+    // Ghidra's notes about its own work, inside the body. A switch it couldn't rebuild keeps a short mark, since the
+    // call through a pointer that it shows instead is the switch.
+    private String withoutWarnings(String body) {
+        return body.replaceAll("(?m)^([ \\t]*)/\\* WARNING: Could not recover jumptable[^\\n]*\\*/$", "$1// a switch Ghidra couldn't rebuild")
+            .replaceAll("(?m)^[ \\t]*/\\* WARNING[^\\n]*\\*/\\n", "");
     }
 
     // The signature as C++ declares it: the return type Ghidra worked out, then the qualified name and the exact
@@ -718,7 +1023,8 @@ public class MT2Export extends GhidraScript {
     private String methodCalls(String text, String owner) {
         StringBuilder result = new StringBuilder();
         int position = 0;
-        Matcher name = Pattern.compile("([A-Za-z_~][\\w]*(?:<[^()]*?>)?(?:::[A-Za-z_~][\\w]*(?:<[^()]*?>)?)*)\\(").matcher(text);
+        // Ghidra wraps a long call after its name: GetItemConst\n        ((vsArrayStore<...> *)&this->costumePart, part).
+        Matcher name = Pattern.compile("([A-Za-z_~][\\w]*(?:<[^()]*?>)?(?:::[A-Za-z_~][\\w]*(?:<[^()]*?>)?)*)\\s*\\(").matcher(text);
 
         while (name.find(position)) {
             int open = name.end() - 1;
@@ -767,7 +1073,7 @@ public class MT2Export extends GhidraScript {
             } else {
                 String target = methodCalls(object, owner);
                 boolean simple = target.matches("[\\w.>\\-\\[\\]]+") || target.matches("\\(.*\\)");
-                Matcher addressOf = Pattern.compile("^\\(?&([\\w:.\\[\\]>\\-]+)\\)?$").matcher(target);
+                Matcher addressOf = Pattern.compile("^\\(?&([\\w:.\\[\\]>\\-]+(?:<[\\w:<>, *]+>[\\w:.]*)?)\\)?$").matcher(target);
 
                 // (&vsRandomSource::Default)->GetFloat() is vsRandomSource::Default.GetFloat().
                 if (addressOf.matches()) {
@@ -784,6 +1090,80 @@ public class MT2Export extends GhidraScript {
         result.append(text.substring(position));
 
         return result.toString();
+    }
+
+    // A call through an object's vtable, (**(code **)(*(long long *)this + 0x160))(this, color), when the object's class
+    // is known (this, or a local declared as one): that class's vtable names the slot, so it's Pulse(color). Its deleting
+    // destructor is delete. Left as it is for an object whose class isn't known: the same slot means other functions in
+    // other classes.
+    private String virtualCalls(String text, String owner) {
+        Map<String, String> declared = new HashMap<>();
+        Matcher declaration = Pattern.compile("(?m)^\\s+([\\w:<>, ]+?)\\s*\\*\\s*(\\w+);$").matcher(text);
+
+        while (declaration.find()) {
+            declared.put(declaration.group(2), declaration.group(1).trim());
+        }
+
+        if (owner != null) {
+            declared.put("this", owner);
+        }
+
+        Matcher call = Pattern.compile("\\(\\*\\*\\(code \\*\\*\\)\\((?:\\*\\(long long \\*\\)(\\w+)|\\(long long\\)(\\w+)->vtable) \\+ (0x[0-9a-f]+|\\d+)\\)\\)\\(")
+            .matcher(text);
+        StringBuilder result = new StringBuilder();
+        int position = 0;
+
+        while (call.find(position)) {
+            String object = call.group(1) != null ? call.group(1) : call.group(2);
+            int close = matchingParenthesis(text, call.end() - 1);
+            Function target = close < 0 ? null : slotFunction(declared.get(object), number(call.group(3)));
+            List<String> arguments = close < 0 ? List.of() : splitArguments(text.substring(call.end(), close));
+
+            if (target == null || arguments.isEmpty() || !stripCast(arguments.get(0)).equals(object)) {
+                result.append(text, position, call.end());
+                position = call.end();
+                continue;
+            }
+
+            String name = target.getName().replace("[abi:cxx11]", "");
+            String rest = String.join(", ", arguments.subList(1, arguments.size()));
+            String variant = variantNote(target);
+
+            result.append(text, position, call.start());
+
+            if (name.startsWith("~") && variant != null && variant.startsWith("deleting")) {
+                result.append("delete ").append(object);
+            } else {
+                result.append(object.equals("this") ? "" : object + "->").append(name).append("(").append(rest).append(")");
+            }
+
+            position = close + 1;
+        }
+
+        result.append(text.substring(position));
+
+        return result.toString();
+    }
+
+    // The function in a class's vtable at this byte offset, or null.
+    private Function slotFunction(String className, long offset) {
+        ClassInfo info = className != null ? classes.get(className) : null;
+
+        if (info == null || offset % 8 != 0) {
+            return null;
+        }
+
+        for (long[] entry : info.vtable) {
+            if (entry[1] == 0 && entry[2] == offset / 8) {
+                return getFunctionAt(toAddr(entry[0]));
+            }
+        }
+
+        return null;
+    }
+
+    private long number(String text) {
+        return text.startsWith("0x") ? Long.parseLong(text.substring(2), 16) : Long.parseLong(text);
     }
 
     private boolean isDeclarationLine(String text, int at) {
@@ -835,11 +1215,14 @@ public class MT2Export extends GhidraScript {
     private List<String> splitArguments(String list) {
         List<String> parts = new ArrayList<>();
         int depth = 0;
+        int templates = 0;
         int start = 0;
         boolean inString = false;
 
         for (int index = 0; index < list.length(); index++) {
             char character = list.charAt(index);
+            // Ghidra spaces its comparisons (a < b); a < straight after a name opens template arguments.
+            boolean afterName = index > 0 && (Character.isLetterOrDigit(list.charAt(index - 1)) || list.charAt(index - 1) == '_');
 
             if (character == '"' && (index == 0 || list.charAt(index - 1) != '\\')) {
                 inString = !inString;
@@ -849,7 +1232,11 @@ public class MT2Export extends GhidraScript {
                 depth++;
             } else if (character == ')' || character == ']' || character == '}') {
                 depth--;
-            } else if (character == ',' && depth == 0) {
+            } else if (character == '<' && afterName) {
+                templates++;
+            } else if (character == '>' && templates > 0 && list.charAt(index - 1) != '-') {
+                templates--;
+            } else if (character == ',' && depth == 0 && templates == 0) {
                 parts.add(list.substring(start, index).trim());
                 start = index + 1;
             }
@@ -895,7 +1282,15 @@ public class MT2Export extends GhidraScript {
 
             String chosen = nameFromAssignment(body, name);
 
-            if (chosen == null && (local.getValue().endsWith("*") || classes.containsKey(local.getValue()))) {
+            if ("item".equals(chosen) && nameForType(local.getValue(), null) != null) {
+                chosen = nameForType(local.getValue(), null);
+            }
+
+            if (chosen == null && isCounter(body, name, local.getValue())) {
+                chosen = "index";
+            }
+
+            if (chosen == null) {
                 chosen = nameForType(local.getValue(), null);
             }
 
@@ -916,8 +1311,18 @@ public class MT2Export extends GhidraScript {
 
         Matcher call = Pattern.compile("(?:[\\w<>:]+(?:->|\\.|::))?(\\w+)\\(([^()]*)\\)$").matcher(assignment.group(1).trim());
 
+        // Ghidra gives one variable to values that share a register (waterHeight, then waterSpread, then 1.0): a field
+        // names it only when it's all the variable ever holds.
         if (!call.find()) {
-            return null;
+            String first = assignment.group(1).trim();
+
+            while (assignment.find()) {
+                if (!assignment.group(1).trim().equals(first)) {
+                    return null;
+                }
+            }
+
+            return nameFromField(first);
         }
 
         String method = call.group(1);
@@ -927,6 +1332,11 @@ public class MT2Export extends GhidraScript {
             Matcher owner = Pattern.compile("(\\w+)>?::(?:Get)?Instance\\(").matcher(expression);
 
             return owner.find() ? nameForType(owner.group(1), null) : null;
+        }
+
+        // An item from a container: its class names it better when it's known (nameLocals).
+        if (method.matches("GetItem(?:Const)?")) {
+            return "item";
         }
 
         Matcher verb = Pattern.compile("^(?:Get|Find|Create|Make|New|Pick|Choose)([A-Z]\\w*)$").matcher(method);
@@ -942,24 +1352,61 @@ public class MT2Export extends GhidraScript {
         return null;
     }
 
+    // region = this->m_region; capacity = (int)zone->capacity. A field nobody named (field_0x4c) says nothing.
+    private String nameFromField(String expression) {
+        Matcher field = Pattern.compile("^(?:\\([\\w:<>, *]+\\)\\s*)?\\(?[\\w\\[\\]().>*&-]*?(?:->|\\.)(\\w+)\\)?$").matcher(expression);
+
+        if (!field.matches() || field.group(1).matches("field\\d*_0x[0-9a-f]+|_\\d+_\\d+_|vtable")) {
+            return null;
+        }
+
+        String name = field.group(1).replaceFirst("^m_(?=[a-zA-Z])", "");
+
+        return name.length() > 1 ? lowerFirst(name) : null;
+    }
+
+    // A whole number that goes up by one, in a loop: for (iVar3 = 0; ...; iVar3 = iVar3 + 1), or uVar6 = uVar6 + 1 in a
+    // do { } while.
+    private boolean isCounter(String body, String local, String type) {
+        if (!type.matches("(?:unsigned )?(?:int|long|long long|short)|u?int\\d+_t")) {
+            return false;
+        }
+
+        String quoted = Pattern.quote(local);
+
+        return Pattern.compile("\\b" + quoted + "(?:\\+\\+| \\+= 1\\b| = " + quoted + " \\+ 1\\b)").matcher(body).find();
+    }
+
+    // mmoZone* is zone, std::string text, a function pointer (code*) method, vsArray<mmoItem*> and
+    // vector<vsLocArg> items and locArgs. Plain numbers and raw bytes say nothing: null, or the fallback.
     private String nameForType(String type, String fallback) {
         String base = type.replace("const", "").replace("*", "").replace("&", "").trim();
+        Matcher container = Pattern.compile("^(?:std::)?(?:vector|vsArray|vsArrayStore|vsObjectArray|vsVolatileArray)<([^,<>]+)[,>]").matcher(base);
+
+        if (container.find()) {
+            String item = nameForType(container.group(1), null);
+
+            return item == null ? fallback : MT2Apply.plural(item);
+        }
 
         base = base.replaceAll("<.*>", "");
         base = base.contains("::") ? base.substring(base.lastIndexOf("::") + 2) : base;
 
         switch (base) {
-            case "string": return "text";
+            case "string": case "basic_string": return "text";
+            case "code": return "method";
+            case "locale": case "ios_base": case "ostream": case "ostringstream": case "stringbuf": case "streambuf": return fallback;
             case "bool": return fallback != null ? "flag" : null;
             case "float": case "double": return fallback != null ? "amount" : null;
             case "int": case "long": case "short": case "unsigned int": case "long long": case "unsigned long long":
                 return fallback != null ? "number" : null;
-            case "char": return fallback != null ? "character" : null;
-            case "void": case "uint8_t": case "uint16_t": case "uint32_t": case "uint64_t": return fallback;
+            // A char* is as often bytes of something unknown as text.
+            case "char": return fallback != null && !type.contains("*") ? "character" : fallback;
+            case "void": return fallback;
             default: break;
         }
 
-        if (!base.matches("[A-Za-z_]\\w*")) {
+        if (!base.matches("[A-Za-z_]\\w*") || base.matches("u?int\\d*(?:_t)?|s?size_t|ptrdiff_t|wchar_t|char\\d*_t|float\\d*|unk\\w*|undefined\\d*")) {
             return fallback;
         }
 

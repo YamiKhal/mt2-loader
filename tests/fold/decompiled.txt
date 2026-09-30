@@ -1,26 +1,26 @@
 {
-  uint64_t *puVar1;
-  uint64_t *puVar2;
-  uint32_t uVar3;
+  long long *puVar1;
+  long long *puVar2;
+  int uVar3;
   unsigned int uVar4;
   vsScene *scene;
   void *pvVar6;
-  uint64_t uVar7;
+  long long uVar7;
   long long lVar8;
   vsModelInstance *modelInstance;
-  uint64_t *puVar11;
+  long long *puVar11;
   unsigned long long uVar12;
   void *pvVar13;
-  uint64_t uVar14;
+  long long uVar14;
   vsMatrix4x4 *matrix4x4;
   long long lVar16;
   int iVar17;
   long long lVar18;
   vsMatrix4x4 *matrix4x42;
   vsVector3D local_298;
-  uint64_t local_228;
-  uint32_t uStack_220;
-  uint64_t local_218;
+  long long local_228;
+  int uStack_220;
+  long long local_218;
   code *local_210;
   vsVector3D *local_200;
   vsTransform3D local_1e8 [3];
@@ -35,7 +35,7 @@
                                 &mmoScenery::typeinfo,0);
           if (modelInstance == (vsModelInstance *)0x0) {
             local_298.x = *(float *)(lVar8 + 0x26c);
-            uVar14 = mmoScenery::GetTypeName(*(uint32_t *)(lVar8 + 0x268));
+            uVar14 = mmoScenery::GetTypeName(*(int *)(lVar8 + 0x268));
             std::ostringstream::ostringstream((ostringstream *)local_1e8);
             local_228 = (FormatArg *)&local_218;
             local_200 = &local_298;
@@ -52,7 +52,7 @@
             iVar17 = local_278;
           }
           else {
-            puVar11 = (uint64_t *)mmoGroup::GetPropLocalTransform(group,(int)lVar18);
+            puVar11 = (long long *)mmoGroup::GetPropLocalTransform(group,(int)lVar18);
             local_1e8[0].m_quaternion._0_8_ = *puVar11;
             local_1e8[0].m_quaternion._8_8_ = puVar11[1];
             local_1e8[0].m_translation._0_8_ = puVar11[2];
@@ -60,7 +60,7 @@
             local_1e8[0].m_scale._4_8_ = puVar11[4];
             local_1e8[0]._40_8_ = puVar11[5];
             local_1e8[0].m_matrix.w.y =
-                 (float)((unsigned long long)*(uint64_t *)((long long)puVar11 + 0x5c) >> 0x20);
+                 (float)((unsigned long long)*(long long *)((long long)puVar11 + 0x5c) >> 0x20);
             lVar8 = vsModelInstance::GetModel(modelInstance);
             iVar17 = (this->modelInstances).count;
             uVar12 = (unsigned long long)iVar17;
@@ -83,7 +83,7 @@ LAB_1403ff350:
             }
             (this->modelInstances).count = (int)uVar12 + 1;
             *(vsModelInstance **)((long long)pvVar13 + uVar12 * 8) = modelInstance;
-            puVar11 = (uint64_t *)vsTransform3D::GetMatrix(local_1e8);
+            puVar11 = (long long *)vsTransform3D::GetMatrix(local_1e8);
             iVar17 = (this->matrix4x4s).count;
             lVar16 = (long long)iVar17;
             iVar3 = (this->matrix4x4s).capacity;
@@ -92,7 +92,7 @@ LAB_1403ff350:
             }
             else {
               matrix4x4 = operator_new__((long long)iVar17 << 6);
-              (this->matrix4x4s).items = (uint8_t *)matrix4x4;
+              (this->matrix4x4s).items = (char *)matrix4x4;
             }
             uVar14 = *puVar11;
             uVar7 = puVar11[1];
@@ -109,7 +109,7 @@ LAB_1403ff350:
             iVar17 = local_278;
           }
   local_288._0_8_ = &PTR__vsArray_141749190;
-  if (local_288.items != (uint8_t *)0x0) {
+  if (local_288.items != (char *)0x0) {
     operator_delete__(local_288.items);
   }
   return;

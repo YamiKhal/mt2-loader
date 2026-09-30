@@ -1,0 +1,19 @@
+{
+  std::string local_38;
+  float local_res10 [2];
+  undefined8 in_R9;
+
+  if (local_res10[0] < 0.0) {
+    tinyformat::format<float>
+              (&local_38,
+               (tinyformat *)"Setting a %f adjustment on a positive-type attribute effect??",
+               (char *)local_res10,in_R9);
+    vsFailedAssert("adjustment >= 0.f",local_38.text,
+                   "../code/Games/MMORPG/Ability/MMO_AbilityEffect.cpp",0xe5);
+    if (local_38.text != local_38.buffer) {
+      operator_delete(local_38.text,CONCAT71(local_38.buffer._1_7_,local_38.buffer[0]) + 1);
+    }
+  }
+  this->adjustment = local_res10[0];
+  return;
+}

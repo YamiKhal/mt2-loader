@@ -1,0 +1,24 @@
+{
+  bool bVar2;
+  unsigned long long local_1c0;
+  string local_1e8;
+  unsigned long long *local_1b8;
+  code *pcVar3;
+  code *pcVar4;
+  char local_198 [384];
+
+  bVar2 = (text == "Focus");
+  if (bVar2) {
+    local_1c0 = this->uid;
+    std::ostringstream::ostringstream((ostringstream *)local_198);
+    local_1b8 = &local_1c0;
+    pcVar3 = tinyformat::detail::FormatArg::formatImpl<unsigned_long_long>;
+    pcVar4 = tinyformat::detail::FormatArg::toIntImpl<unsigned_long_long>;
+    tinyformat::detail::formatImpl
+              ((ostream *)local_198,"MessageTo Camera FocusOn %d",(FormatArg *)&local_1b8,1);
+    std::stringbuf::str(&local_1e8,(stringbuf *)(local_198 + 8));
+    std::ostringstream::~ostringstream((ostringstream *)local_198);
+    mmoScriptEngine::Command(&local_1e8);
+  }
+  return true;
+}

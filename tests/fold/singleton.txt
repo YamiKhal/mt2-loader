@@ -1,0 +1,26 @@
+{
+  vsSingletonManager *pvVar1;
+  undefined8 local_70;
+  std::string local_68;
+  std::string local_48;
+  allocator *paVar2;
+
+  pvVar1 = vsSingletonManager::s_instance;
+  if (vsSingleton<mmoClock>::s_instance == 0) {
+    if (vsSingletonManager::s_instance != (vsSingletonManager *)0x0) {
+      std::string::string<std::allocator<char>>((std::string *)&local_48,"P8mmoClock",paVar2);
+      vsSingleton<mmoClock>::s_instance =
+           vsSingletonManager::GetSingleton(pvVar1,(std::string *)&local_48);
+      if (vsSingleton<mmoClock>::s_instance != 0) goto LAB_140419931;
+    }
+    std::string::string<std::allocator<char>>((std::string *)&local_68,"8mmoClock",paVar2);
+    Demangle((std::string *)&local_48,(std::string *)&local_68);
+    local_70 = local_48.text;
+    vsFailedAssertF<char_const*,char_const*>
+              ("s_instance","../code/vectorstorm/VS/Utils/VS_Singleton.h",0x4f,"No instance of %s?",
+               &local_70);
+  }
+LAB_140419931:
+  this->constructedFlatDay = *(int *)(vsSingleton<mmoClock>::s_instance + 0x44);
+  return;
+}

@@ -11,6 +11,8 @@
 #include "program_json.h"
 
 #define PATH_CAPACITY 1024
+// --export: every file again, over what the last whole run worked out (MT2Apply and the export, not MT2Infer).
+#define EVERY_FILE L"*"
 
 typedef struct Workspace {
     wchar_t folder[PATH_CAPACITY];
@@ -145,7 +147,7 @@ static bool write_mappings(const wchar_t* mappings_folder, const GameImage* imag
 }
 
 static int build_arguments(const Workspace* workspace, const wchar_t* exe_path, bool with_mappings, bool everything,
-    const wchar_t** arguments) {
+    const wchar_t* only_file, const wchar_t** arguments) {
     int count = 0;
 
     arguments[count++] = workspace->project_folder;
@@ -167,8 +169,11 @@ static int build_arguments(const Workspace* workspace, const wchar_t* exe_path, 
     arguments[count++] = workspace->scripts;
 
     // What the game and the mappings say first; then twice over, what the code says given that (a field's type
-    // found in the first round tells what's read through it in the second), put under them.
-    for (int round = 0; round < 3; round++) {
+    // found in the first round tells what's read through it in the second), put under them. One file only takes the
+    // mappings again, over what the last whole run worked out.
+    int rounds = only_file != NULL ? 1 : 3;
+
+    for (int round = 0; round < rounds; round++) {
         if (round > 0) {
             arguments[count++] = L"-postScript";
             arguments[count++] = L"MT2Infer.java";
@@ -181,7 +186,7 @@ static int build_arguments(const Workspace* workspace, const wchar_t* exe_path, 
         arguments[count++] = workspace->program_json;
         arguments[count++] = with_mappings ? workspace->mappings_json : L"-";
 
-        if (round > 0) {
+        if (round > 0 || only_file != NULL) {
             arguments[count++] = workspace->inferred_json;
         }
     }
@@ -192,6 +197,10 @@ static int build_arguments(const Workspace* workspace, const wchar_t* exe_path, 
     arguments[count++] = workspace->program_json;
     arguments[count++] = with_mappings ? workspace->mappings_json : L"-";
     arguments[count++] = everything ? L"all" : L"game";
+
+    if (only_file != NULL && wcscmp(only_file, EVERY_FILE) != 0) {
+        arguments[count++] = only_file;
+    }
 
     return count;
 }
@@ -206,8 +215,93 @@ static void mark_analyzed(const Workspace* workspace) {
 }
 
 
-int command_decompile(const wchar_t* exe, const wchar_t* folder, const wchar_t* ghidra_folder, const wchar_t* mappings_folder,
-    bool everything) {
+// How long the log is: Ghidra adds to it, and only what this run adds says how it went.
+static long log_length(const wchar_t* path) {
+    FILE* file = _wfopen(path, L"rb");
+
+    if (file == NULL) {
+        return 0;
+    }
+
+    fseek(file, 0, SEEK_END);
+
+    long length = ftell(file);
+
+    fclose(file);
+
+    return length;
+}
+
+// A script that fails doesn't stop Ghidra, and leaves the files it didn't get to as they were: prints the error's
+// first lines when this run's part of the log has one.
+static bool script_failed(const wchar_t* path, long from) {
+    FILE* file = _wfopen(path, L"rb");
+    char line[1024];
+    int shown = 0;
+
+    if (file == NULL) {
+        return false;
+    }
+
+    fseek(file, from, SEEK_SET);
+
+    while (fgets(line, sizeof line, file) != NULL && shown < 6) {
+        if (shown > 0 || strstr(line, "SCRIPT ERROR") != NULL) {
+            fputs(line, stderr);
+            shown++;
+        }
+    }
+
+    fclose(file);
+
+    return shown > 0;
+}
+
+// The mappings folder a run used is kept in the workspace, and a run without --mappings uses it again: forgetting it
+// would lose every name. NULL when no run has had one.
+static const wchar_t* remembered_mappings(const wchar_t* folder, const wchar_t* given, wchar_t* remembered) {
+    wchar_t path[GAME_PATH_CAPACITY];
+    char text[GAME_PATH_CAPACITY * 3] = "";
+
+    swprintf(path, GAME_PATH_CAPACITY, L"%ls\\mappings_folder.txt", folder);
+
+    if (given != NULL) {
+        GetFullPathNameW(given, GAME_PATH_CAPACITY, remembered, NULL);
+        WideCharToMultiByte(CP_UTF8, 0, remembered, -1, text, sizeof text, NULL, NULL);
+
+        FILE* file = _wfopen(path, L"wb");
+
+        if (file != NULL) {
+            fputs(text, file);
+            fclose(file);
+        }
+
+        return remembered;
+    }
+
+    FILE* file = _wfopen(path, L"rb");
+
+    if (file == NULL) {
+        return NULL;
+    }
+
+    size_t length = fread(text, 1, sizeof text - 1, file);
+
+    fclose(file);
+    text[length] = '\0';
+
+    if (length == 0 || MultiByteToWideChar(CP_UTF8, 0, text, -1, remembered, GAME_PATH_CAPACITY) == 0) {
+        return NULL;
+    }
+
+    wprintf(L"Mappings: %ls (from the last run; --mappings for others)\n", remembered);
+
+    return remembered;
+}
+
+int command_decompile(const wchar_t* exe, const wchar_t* folder, const wchar_t* ghidra_folder, const wchar_t* given_mappings,
+    bool everything, const wchar_t* only_file) {
+    wchar_t remembered[GAME_PATH_CAPACITY];
     wchar_t exe_path[GAME_PATH_CAPACITY];
     char build[64];
     GameImage image;
@@ -220,8 +314,10 @@ int command_decompile(const wchar_t* exe, const wchar_t* folder, const wchar_t* 
 
     game_exe_build_name(exe_path, build, sizeof build);
 
-    bool ready = prepare_workspace(folder, build, &workspace)
-        && program_json_write(&image, build, workspace.program_json)
+    bool ready = prepare_workspace(folder, build, &workspace);
+    const wchar_t* mappings_folder = ready ? remembered_mappings(folder, given_mappings, remembered) : NULL;
+
+    ready = ready && program_json_write(&image, build, workspace.program_json)
         && (mappings_folder == NULL || write_mappings(mappings_folder, &image, &workspace));
 
     game_image_free(&image);
@@ -230,11 +326,20 @@ int command_decompile(const wchar_t* exe, const wchar_t* folder, const wchar_t* 
         return 1;
     }
 
-    clear_old_export(&workspace);
+    bool analyzed = is_file(workspace.analyzed_mark);
+
+    if (only_file != NULL && (!analyzed || !is_file(workspace.inferred_json))) {
+        fwprintf(stderr, L"One file needs a whole run first: mt2sdk decompile %ls\n", folder);
+
+        return 1;
+    }
+
+    if (only_file == NULL || wcscmp(only_file, EVERY_FILE) == 0) {
+        clear_old_export(&workspace);
+    }
 
     const wchar_t* arguments[GHIDRA_MAX_ARGUMENTS];
-    int count = build_arguments(&workspace, exe_path, mappings_folder != NULL, everything, arguments);
-    bool analyzed = is_file(workspace.analyzed_mark);
+    int count = build_arguments(&workspace, exe_path, mappings_folder != NULL, everything, only_file, arguments);
 
     wprintf(L"Ghidra: %ls\nJava: %ls\n", ghidra.folder, ghidra.java_home);
 
@@ -246,14 +351,26 @@ int command_decompile(const wchar_t* exe, const wchar_t* folder, const wchar_t* 
     wprintf(L"Everything Ghidra prints goes to %ls\n", workspace.output_log);
     fflush(stdout);
 
+    long log_start = log_length(workspace.output_log);
+
     if (!ghidra_run(&ghidra, arguments, count, workspace.output_log)) {
         wprintf(L"Ghidra stopped with a problem: see %ls\n", workspace.output_log);
 
         return 1;
     }
 
+    if (script_failed(workspace.output_log, log_start)) {
+        wprintf(L"A script failed, so some files weren't rebuilt: see %ls\n", workspace.output_log);
+
+        return 1;
+    }
+
     if (!analyzed) {
         mark_analyzed(&workspace);
+    }
+
+    if (only_file != NULL && wcscmp(only_file, EVERY_FILE) != 0) {
+        return 0;
     }
 
     wprintf(L"The game's code as C++, laid out like its source: %ls (start with README.md)\nThe Ghidra project, to open in Ghidra: %ls\n",

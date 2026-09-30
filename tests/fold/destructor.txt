@@ -1,0 +1,32 @@
+{
+  char *items;
+  char *text;
+  char **items2;
+  int count;
+  long long index;
+
+  items = (this->field37_0xa0).items;
+  if (items != (char *)0x0) {
+    operator_delete__(items);
+  }
+  count = (this->costumePart).count;
+  items2 = (this->costumePart).items;
+  if (0 < count) {
+    index = 0;
+    do {
+      if (items2[index] != (char *)0x0) {
+        (**(code **)(*(long long *)items2[index] + 8))();
+        items2 = (this->costumePart).items;
+        items2[index] = (char *)0x0;
+      }
+      index = index + 1;
+    } while ((int)index < count);
+  }
+  text = (this->actorName).text;
+  if (text != (this->actorName).buffer) {
+    operator_delete(text,*(long long *)(this->actorName).buffer + 1);
+  }
+  (&(this->costumePart).field_0x18)->~vsNullObject();
+  ~vsNullObject();
+  return;
+}

@@ -234,8 +234,10 @@ static void check_class(Checker* checker, const Entry* entry) {
     uint32_t size = size_note != NULL ? (uint32_t)strtoul(size_note->value + 2, NULL, 16) : 0;
     CodeSize code = checker->code_sizes != NULL ? checker->code_sizes[entry - checker->mappings->entries] : (CodeSize){ 0, 0 };
     uint32_t code_size = code.size;
-    // A smaller object than declared is certain; a bigger one only when several places agree (see CodeSize).
-    bool conflicts = code_size > 0 && code_size != size && (code_size < size || code.places >= 2);
+    // A smaller object than declared is certain; a bigger one only when several places agree (see CodeSize), and not
+    // when it's room for a few of them (a std::vector growing to two vsLocArg asks for 2 * 0x68).
+    bool is_array = size > 0 && code_size > size && code_size % size == 0;
+    bool conflicts = code_size > 0 && code_size != size && (code_size < size || (code.places >= 2 && !is_array));
 
     checker->counts.classes++;
 

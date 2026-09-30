@@ -1,0 +1,19 @@
+{
+  char **ppuVar1;
+
+  vsNullObject::vsNullObject((vsNullObject *)this);
+  ppuVar1 = operator_new__(0x20);
+  (this->costumePart).items = ppuVar1;
+  vsNullObject::vsNullObject((vsNullObject *)&(this->costumePart).field_0x18);
+  mmoWindow::mmoWindow((mmoWindow *)this,"Costume");
+  count = (this->costumePart).count;
+  if (0 < count) {
+    items = (this->costumePart).items;
+    index = 0;
+    do {
+      f(items[index]);
+      index = index + 1;
+    } while ((int)index < count);
+  }
+  return;
+}

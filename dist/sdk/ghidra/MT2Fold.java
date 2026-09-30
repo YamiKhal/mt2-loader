@@ -5,6 +5,7 @@
 // - a string formatted into a stream and handed to vsLog_ is vsLog("Scenery object '%s:%d' ...", name, variant);
 // - an object copied 8 bytes at a time is one assignment: transform = *(vsTransform3D *)source;
 // - vsArray's add (grow the storage when full, copy, store at the end) is models.AddItem(instance);
+// - a singleton's lookup and its "No instance of %s?" assert is vsSingleton<mmoClock>::Instance();
 // - a temporary std::string's destruction is left out, as the source never wrote it.
 // Anything that doesn't match exactly is left as it was.
 
@@ -23,8 +24,26 @@ final class MT2Fold {
     // " = " with spaces only ever assigns; the target mustn't end in an operator (a += b).
     private static final Pattern ASSIGNMENT = Pattern.compile("^(\\s*)([^=;]+?[\\w\\])]) = (.+);$", Pattern.DOTALL);
     private static final Pattern IDENTIFIER = Pattern.compile("\\b[A-Za-z_]\\w*\\b");
+    // vsFailedAssert("m_scene", "message", file, line), or vsFailedAssertF with the values its message is formatted with.
     private static final Pattern FAILED_ASSERT = Pattern.compile(
-        "^\\s*vsFailedAssert\\(\"((?:[^\"\\\\]|\\\\.)*)\",\\s*\"((?:[^\"\\\\]|\\\\.)*)\",\\s*\"([^\"]*)\",\\s*(0x[0-9a-f]+|\\d+)\\);$", Pattern.DOTALL);
+        "^\\s*vsFailedAssertF?\\(\"((?:[^\"\\\\]|\\\\.)*)\",\\s*\"((?:[^\"\\\\]|\\\\.)*)\",\\s*\"([^\"]*)\",\\s*(0x[0-9a-f]+|\\d+)((?:,\\s*.+)?)\\);$",
+        Pattern.DOTALL);
+    private static final Pattern FORMAT_INTO = Pattern.compile(
+        "^tinyformat::format<(.*?)>\\s*\\(\\s*(?:\\([^()]*\\)\\s*)?&(\\w+),\\s*(?:\\([^()]*\\)\\s*)?(\"(?:[^\"\\\\]|\\\\.)*\")\\s*,?\\s*(.*)\\);$",
+        Pattern.DOTALL);
+    // vsFailedAssert("id >= 0 && id < m_arrayLength", message.text, file, line): a message made at run time.
+    private static final Pattern MESSAGE_ASSERT = Pattern.compile(
+        "^vsFailedAssert\\(\"((?:[^\"\\\\]|\\\\.)*)\",\\s*(?:\\([^()]*\\)\\s*)?([\\w.\\[\\]]+),\\s*\"([^\"]*)\",\\s*(0x[0-9a-f]+|\\d+)\\);$", Pattern.DOTALL);
+    private static final Pattern ASSERT_OF_TEXT = Pattern.compile(
+        "^vsFailedAssert\\((\"(?:[^\"\\\\]|\\\\.)*\"),\\s*(\\w+)\\.text,\\s*(\"[^\"]*\"),\\s*(0x[0-9a-f]+|\\d+)\\);$", Pattern.DOTALL);
+    private static final Pattern COPIED_TEXT = Pattern.compile("^std::string::_M_assign\\(&(\\w+),.*\\);$");
+    private static final Pattern STREAM_TEXT = Pattern.compile("^std::stringbuf::str\\(&(\\w+),.*\\);$");
+    // A stream going away: its destructor, or the destructor copied in (vtables put back, the locale and ios_base).
+    private static final Pattern STREAM_CLEANUP = Pattern.compile(
+        "^(?:std::ostringstream::~ostringstream\\(.*\\);|[\\w.\\[\\]]+ = (?:\\([^()]*\\))?&(?:PTR__(?:ostringstream|stringbuf|streambuf|ios)_\\w+|DAT_\\w+);"
+            + "|[\\w.\\[\\]]+(?:->|\\.)~(?:locale|ios_base)\\(\\);)$");
+    private static final Pattern SINGLETON_CHECK = Pattern.compile("^if \\(vsSingleton<(.+?)>::s_instance == (?:\\([^()]*\\))?0(?:x0)?\\) \\{$");
+    private static final Pattern REGISTER_FILL = Pattern.compile("^in_\\w+ = [^;]+;$");
     private static final Pattern LOG_CALL = Pattern.compile("^\\s*vsLog_\\(\"([^\"]*)\",\\s*(0x[0-9a-f]+|\\d+),\\s*(.+)\\);$", Pattern.DOTALL);
     private static final Pattern FORMAT_CALL = Pattern.compile(
         "^\\s*(?:(\\w+)(?:\\[0\\])?(?:->|\\.)format<[^>]*>\\(|tinyformat::format<[^>]*>\\(\\s*(?:\\([^()]*\\)\\s*)?&?(\\w+)\\s*,\\s*)(\".*)\\);$", Pattern.DOTALL);
@@ -32,28 +51,48 @@ final class MT2Fold {
         "tinyformat::detail::formatImpl\\s*\\(.*?,\\s*(\"(?:[^\"\\\\]|\\\\.)*\")\\s*,\\s*(?:\\(FormatArg \\*\\))?(&?[\\w.]+)\\s*,\\s*(\\d+)\\)", Pattern.DOTALL);
     private static final Pattern STACK_PLACE = Pattern.compile("^(?:local_([0-9a-f]+)(?:\\._(\\d+)_\\d+_|\\.field\\d+_0x([0-9a-f]+))?|stack0x([0-9a-f]+))$");
     private static final Pattern TYPEINFO = Pattern.compile("^&([\\w:<>, *]+)::typeinfo$");
-    private static final Set<String> COPY_WORDS = Set.of("uint64_t", "uint32_t", "uint16_t", "uint8_t", "long", "unsigned", "int", "float",
-        "double", "char", "short", "bool");
+    private static final Set<String> COPY_WORDS = Set.of("long", "unsigned", "int", "float", "double", "char", "short", "bool");
+    // this->vtable = &PTR__mmoCostume_1417..., or through a cast: the compiler's, in every constructor and destructor.
+    private static final Pattern VTABLE_WRITE = Pattern.compile("^\\s*([^=;]+?) = (?:\\([^()]*\\))?&PTR__[A-Za-z]\\w*_[0-9a-f]{6,};$");
+    private static final Pattern LOCAL_MENTION = Pattern.compile("\\b(?:[a-z]{1,4}Var\\d+|local_[0-9a-f]+|[a-z]{1,3}Stack_[0-9a-f]+)\\b");
+    private static final Pattern NULL_CAST = Pattern.compile("\\((?:const )?[\\w:<>, ]+?\\s*\\*+\\)0x0\\b");
 
     private MT2Fold() {
     }
 
     // A statement of the decompiled text: its lines, and the text they make together.
-    private record Statement(int first, int last, String text) {}
+    record Statement(int first, int last, String text) {}
+
+    static boolean isDeclaration(String line) {
+        return DECLARATION.matcher(line).matches();
+    }
 
     static String fold(String body) {
+        return fold(body, "");
+    }
+
+    // The function's name says which rules apply: a destructor's own cleanup, a file's setup of its globals.
+    static String fold(String body, String functionName) {
         List<String> lines = new ArrayList<>(List.of(foldDynamicCasts(body).split("\n", -1)));
         Map<String, String> declared = declarations(lines);
 
+        foldFormattedAsserts(lines);
+        foldStringCleanup(lines);
+        foldSingletons(lines);
+        foldMessageBlocks(lines);
+        foldFormatStrings(lines);
         foldAsserts(lines);
         foldLogs(lines);
         foldStringCleanup(lines);
         foldCopies(lines, declared);
         foldArrayAdds(lines);
         foldLocalArrayCleanup(lines);
+        foldZeroRuns(lines);
+        MT2Idioms.apply(lines, functionName);
+        dropVtableWrites(lines);
         dropUnusedLocals(lines);
 
-        return String.join("\n", lines);
+        return NULL_CAST.matcher(String.join("\n", lines)).replaceAll("nullptr");
     }
 
     private static Map<String, String> declarations(List<String> lines) {
@@ -72,7 +111,7 @@ final class MT2Fold {
         return declared;
     }
 
-    private static List<Statement> statements(List<String> lines) {
+    static List<Statement> statements(List<String> lines) {
         List<Statement> statements = new ArrayList<>();
         int index = 0;
 
@@ -98,18 +137,18 @@ final class MT2Fold {
         return trimmed.isEmpty() || trimmed.endsWith(";") || trimmed.endsWith("{") || trimmed.endsWith("}") || trimmed.endsWith(":");
     }
 
-    private static void replace(List<String> lines, int first, int last, String replacement) {
+    static void replace(List<String> lines, int first, int last, String replacement) {
         remove(lines, first + 1, last);
         lines.set(first, replacement);
     }
 
-    private static void remove(List<String> lines, int first, int last) {
+    static void remove(List<String> lines, int first, int last) {
         for (int index = last; index >= first; index--) {
             lines.remove(index);
         }
     }
 
-    private static String indentOf(String line) {
+    static String indentOf(String line) {
         return line.substring(0, line.length() - line.stripLeading().length());
     }
 
@@ -118,19 +157,36 @@ final class MT2Fold {
     }
 
     // if (<the condition failing>) { vsFailedAssert("m_scene", "message", file, line); } is vsAssert(m_scene, "message").
+    // The condition can run over a few lines. Inside the block, a register Ghidra saw filled for the call (in_R8 =
+    // "../code/...";) and a value read again after it (the call clobbered its register: the same line as before the if)
+    // aren't part of it.
     private static void foldAsserts(List<String> lines) {
         for (int index = 0; index + 2 < lines.size(); index++) {
-            String opening = lines.get(index).trim();
-
-            if (!opening.startsWith("if (") || !opening.endsWith("{")) {
+            if (!lines.get(index).trim().startsWith("if (")) {
                 continue;
             }
 
-            int close = index + 1;
+            int opening = index;
+
+            while (opening < lines.size() - 1 && opening - index < 4 && !lines.get(opening).trim().endsWith("{")
+                && !lines.get(opening).trim().endsWith(";")) {
+                opening++;
+            }
+
+            if (!lines.get(opening).trim().endsWith("{")) {
+                continue;
+            }
+
+            int close = opening + 1;
             StringBuilder call = new StringBuilder();
 
-            while (close < lines.size() && close - index < 6 && !lines.get(close).trim().equals("}")) {
-                call.append(" ").append(lines.get(close).trim());
+            while (close < lines.size() && close - opening < 8 && !lines.get(close).trim().equals("}")) {
+                String line = lines.get(close).trim();
+
+                if (!REGISTER_FILL.matcher(line).matches() && !(line.contains(" = ") && appearsBefore(lines, index, line))) {
+                    call.append(" ").append(line);
+                }
+
                 close++;
             }
 
@@ -142,11 +198,415 @@ final class MT2Fold {
 
             String condition = failed.group(1).replace("\\\"", "\"");
             String file = failed.group(3).substring(failed.group(3).lastIndexOf('/') + 1);
-            String replacement = indentOf(lines.get(index)) + "vsAssert(" + condition + ", \"" + failed.group(2) + "\"); // " + file
-                + " line " + number(failed.group(4));
+            String values = failed.group(5);
+            String replacement = indentOf(lines.get(index)) + (values.isEmpty() ? "vsAssert(" : "vsAssertF(") + condition + ", \""
+                + failed.group(2) + "\"" + values + "); // " + file + " line " + number(failed.group(4));
 
             replace(lines, index, close, replacement);
         }
+
+        shortenFailedAsserts(lines);
+    }
+
+    // vsAssertF's message is formatted into a temporary string first: tinyformat::format<float>(&message, "Setting a %f
+    // adjustment", &adjustment) then vsFailedAssert("adjustment >= 0.f", message.text, file, line). Joined, it's
+    // vsFailedAssertF("adjustment >= 0.f", "Setting a %f adjustment", file, line, adjustment), which foldAsserts reads.
+    private static void foldFormattedAsserts(List<String> lines) {
+        List<Statement> all = statements(lines);
+
+        for (int index = all.size() - 2; index >= 0; index--) {
+            Matcher format = FORMAT_INTO.matcher(all.get(index).text());
+            Matcher failed = format.matches() ? ASSERT_OF_TEXT.matcher(all.get(index + 1).text()) : null;
+
+            if (failed == null || !failed.matches() || !failed.group(2).equals(format.group(2))) {
+                continue;
+            }
+
+            // The template says how many values there are; Ghidra may show more (a register it thought was passed).
+            int valueCount = splitArguments(format.group(1)).size();
+            List<String> given = splitArguments(format.group(4));
+            StringBuilder values = new StringBuilder();
+
+            for (int value = 0; value < valueCount && value < given.size(); value++) {
+                values.append(", ").append(stripCasts(given.get(value).replaceAll("\\s+", " ").trim()).replaceFirst("^&", ""));
+            }
+
+            String replacement = indentOf(lines.get(all.get(index).first())) + "vsFailedAssertF(" + failed.group(1) + ", " + format.group(3)
+                + ", " + failed.group(3) + ", " + failed.group(4) + values + ");";
+
+            replace(lines, all.get(index).first(), all.get(index + 1).last(), replacement);
+        }
+    }
+
+    // An assert whose message is made at run time, copied in whole: the stream or tinyformat, the type name Demangle
+    // writes, the temporary strings, their cleanup. The block only runs when the check fails and only makes and reports
+    // the message, so it's the assert: vsAssertF(id >= 0 && id < m_arrayLength, "Out of bounds vsArray access: requested
+    // element %d ...", index, count, "vsColor"). When a value can't be found, the message goes alone.
+    private static void foldMessageBlocks(List<String> lines) {
+        for (int index = lines.size() - 1; index >= 0; index--) {
+            if (!lines.get(index).trim().startsWith("if (")) {
+                continue;
+            }
+
+            int close = closingBraceLine(lines, index);
+
+            if (close < 0 || !lines.get(close).trim().equals("}") || close + 1 < lines.size() && lines.get(close + 1).trim().startsWith("else")) {
+                continue;
+            }
+
+            String block = String.join("\n", lines.subList(index, close + 1));
+
+            if (!block.contains("vsFailedAssert") || block.contains("return") || block.contains("break;") || block.contains("continue;")) {
+                continue;
+            }
+
+            List<Statement> all = statements(lines);
+            int first = statementAt(all, index);
+            int last = statementAt(all, close);
+            int assertAt = last - 1;
+
+            // What the failed assert leaves behind: its message string freed.
+            while (assertAt - 3 > first && all.get(assertAt).text().equals("}") && isStringFree(all.get(assertAt - 2).text(), all.get(assertAt - 1).text())) {
+                assertAt -= 3;
+            }
+
+            Matcher failed = MESSAGE_ASSERT.matcher(all.get(assertAt).text());
+
+            if (!failed.matches() || !labelsStayInside(all, first, last) || !all.get(first).text().endsWith("{")) {
+                continue;
+            }
+
+            String replacement = indentOf(lines.get(index)) + messageAssert(all, first + 1, assertAt, failed);
+
+            replace(lines, index, close, replacement);
+        }
+    }
+
+    // vsFormatString copied in: a stream made, tinyformat writing into it, its text copied out, the stream destroyed
+    // (called, or copied in as its vtables put back). It's text = vsFormatString("FocusOn %d", uid). Left as it is when
+    // a value can't be found, or something else happens between.
+    private static void foldFormatStrings(List<String> lines) {
+        for (int pass = 0; pass < 100; pass++) {
+            List<Statement> all = statements(lines);
+            boolean folded = false;
+
+            for (int index = 0; index < all.size() && !folded; index++) {
+                Matcher copy = STREAM_TEXT.matcher(all.get(index).text());
+
+                if (copy.matches()) {
+                    folded = foldFormatString(lines, all, index, index, copy.group(1));
+                    continue;
+                }
+
+                // The stream's text copied out by hand (str() copied in): if (...) { _M_assign(&text, ...) } else
+                // { _M_replace(&text, ...) }.
+                Matcher assign = index + 1 < all.size() ? COPIED_TEXT.matcher(all.get(index + 1).text()) : null;
+                int copyEnd = assign != null && assign.matches() && all.get(index).text().matches("if \\(\\w+ == 0\\) \\{")
+                    ? endOfIfElse(all, index) - 1 : -1;
+
+                if (copyEnd > index && contains(all, index, copyEnd + 1, "_M_replace(&" + assign.group(1) + ",")) {
+                    folded = foldFormatString(lines, all, index, copyEnd, assign.group(1));
+                }
+            }
+
+            if (!folded) {
+                return;
+            }
+        }
+    }
+
+    private static boolean foldFormatString(List<String> lines, List<Statement> all, int copyAt, int copyEnd, String target) {
+        int start = copyAt - 1;
+
+        while (start >= 0 && copyAt - start < 40 && !all.get(start).text().startsWith("std::ostringstream::ostringstream(")) {
+            if (!ASSIGNMENT.matcher(all.get(start).text()).matches() && !all.get(start).text().startsWith("tinyformat::detail::formatImpl")) {
+                return false;
+            }
+
+            start--;
+        }
+
+        if (start < 0 || copyAt - start >= 40) {
+            return false;
+        }
+
+        StringBuilder block = new StringBuilder();
+
+        for (int index = start; index < copyAt; index++) {
+            block.append(all.get(index).text()).append("\n");
+        }
+
+        Matcher impl = FORMAT_IMPL.matcher(block);
+
+        if (!impl.find()) {
+            return false;
+        }
+
+        List<String> values = inlinedValues(all, start, copyAt, impl);
+
+        if (values == null) {
+            return false;
+        }
+
+        // What's stored in between only feeds tinyformat: nothing after reads it.
+        for (int index = start; index < copyAt; index++) {
+            Matcher assignment = ASSIGNMENT.matcher(all.get(index).text());
+            String name = assignment.matches() ? baseName(assignment.group(2)) : null;
+
+            if (name != null && !name.equals(target) && countOutside(lines, name, all.get(start).first(), all.get(copyEnd).last()) > 0) {
+                return false;
+            }
+        }
+
+        int end = copyEnd;
+
+        // A global's address put back is the stream's only when the place was the stream's.
+        while (end + 1 < all.size() && STREAM_CLEANUP.matcher(all.get(end + 1).text()).matches()
+            && (!all.get(end + 1).text().contains("&DAT_") || block.toString().contains(baseName(all.get(end + 1).text().split(" = ")[0])))) {
+            end++;
+        }
+
+        String call = values.isEmpty() ? impl.group(1) : impl.group(1) + ", " + String.join(", ", values);
+
+        replace(lines, all.get(start).first(), all.get(end).last(), indentOf(lines.get(all.get(start).first())) + target + " = vsFormatString(" + call + ");");
+
+        return true;
+    }
+
+    private static int statementAt(List<Statement> statements, int line) {
+        for (int index = 0; index < statements.size(); index++) {
+            if (statements.get(index).last() >= line) {
+                return index;
+            }
+        }
+
+        return statements.size() - 1;
+    }
+
+    private static String messageAssert(List<Statement> statements, int first, int assertAt, Matcher failed) {
+        String condition = failed.group(1).replace("\\\"", "\"");
+        String file = failed.group(3).substring(failed.group(3).lastIndexOf('/') + 1);
+        String where = "; // " + file + " line " + number(failed.group(4));
+        String format = null;
+        List<String> values = null;
+
+        for (int index = first; index < assertAt && format == null; index++) {
+            Matcher into = FORMAT_INTO.matcher(statements.get(index).text());
+
+            if (into.matches()) {
+                format = into.group(3);
+                values = formattedValues(statements, first, assertAt, splitArguments(into.group(1)).size(), splitArguments(into.group(4)));
+            }
+        }
+
+        if (format == null) {
+            StringBuilder block = new StringBuilder();
+
+            for (int index = first; index < assertAt; index++) {
+                block.append(statements.get(index).text()).append("\n");
+            }
+
+            Matcher impl = FORMAT_IMPL.matcher(block);
+
+            if (!impl.find()) {
+                return "vsAssert(" + condition + ")" + where;
+            }
+
+            format = impl.group(1);
+            values = inlinedValues(statements, first, assertAt, impl);
+        }
+
+        if (values == null || values.isEmpty()) {
+            return "vsAssert(" + condition + ", " + format + ")" + where;
+        }
+
+        return "vsAssertF(" + condition + ", " + format + ", " + String.join(", ", values) + ")" + where;
+    }
+
+    // The values given to tinyformat::format: the template names how many, Ghidra may show one more. Null when one of
+    // them is only a place Ghidra named.
+    private static List<String> formattedValues(List<Statement> statements, int first, int last, int count, List<String> given) {
+        List<String> values = new ArrayList<>();
+
+        for (int value = 0; value < count && value < given.size(); value++) {
+            String found = readable(statements, first, last, stripCasts(given.get(value).replaceAll("\\s+", " ").trim()).replaceFirst("^&", ""));
+
+            if (found == null) {
+                return null;
+            }
+
+            values.add(found);
+        }
+
+        return values;
+    }
+
+    private static List<String> inlinedValues(List<Statement> statements, int first, int last, Matcher impl) {
+        int count = Integer.parseInt(impl.group(3));
+        String given = impl.group(2);
+        String assigned = given.startsWith("&") ? given : lastAssignment(statements, first, last, given);
+        Long base = assigned != null && assigned.startsWith("&") ? stackOffset(assigned.substring(1)) : stackOffset(given);
+        List<String> values = new ArrayList<>();
+
+        for (int argument = 0; argument < count && base != null; argument++) {
+            String pointer = assignmentAt(statements, first, last, base - 24L * argument);
+            String value = pointer == null ? null : readable(statements, first, last, pointer.replaceFirst("^&", ""));
+
+            if (value == null) {
+                return null;
+            }
+
+            values.add(value);
+        }
+
+        return base == null ? null : values;
+    }
+
+    // A value as the source would name it: what was put in a place Ghidra named, a class's name Demangle wrote.
+    private static String readable(List<Statement> statements, int first, int last, String value) {
+        String found = GHIDRA_LOCAL.matcher(value).matches() ? valueAt(statements, first, last, value) : value;
+
+        for (int index = first; index < last && GHIDRA_LOCAL.matcher(found).matches(); index++) {
+            Matcher demangle = Pattern.compile("^Demangle\\(&" + Pattern.quote(found) + ",\\s*&?(\\w+)\\);$").matcher(statements.get(index).text());
+
+            if (demangle.matches()) {
+                return mangledName(statements, first, index, demangle.group(1));
+            }
+        }
+
+        return GHIDRA_LOCAL.matcher(found).matches() || found.contains("local_") || found.contains("Stack_") ? null : found;
+    }
+
+    // "7vsColor" or "P10mmoOptions", put into the string Demangle reads, is "vsColor".
+    private static String mangledName(List<Statement> statements, int first, int last, String source) {
+        Pattern mangled = Pattern.compile("\"P?\\d+([A-Za-z_]\\w*)\"");
+
+        for (int index = last - 1; index >= first; index--) {
+            String text = statements.get(index).text();
+            Matcher name = mangled.matcher(text);
+
+            if (text.contains(source) && name.find()) {
+                return "\"" + name.group(1) + "\"";
+            }
+        }
+
+        return null;
+    }
+
+    private static boolean appearsBefore(List<String> lines, int end, String line) {
+        for (int index = 0; index < end; index++) {
+            if (lines.get(index).trim().equals(line)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // A failed assert Ghidra didn't put under its if (the condition is somewhere above, or the code only gets there when
+    // it failed) keeps its call, with the source's file and line as a comment instead of the path.
+    private static void shortenFailedAsserts(List<String> lines) {
+        List<Statement> all = statements(lines);
+
+        for (int index = all.size() - 1; index >= 0; index--) {
+            Statement statement = all.get(index);
+            Matcher failed = statement.text().startsWith("vsFailedAssert") ? FAILED_ASSERT.matcher(statement.text()) : null;
+
+            if (failed == null || !failed.matches()) {
+                continue;
+            }
+
+            String file = failed.group(3).substring(failed.group(3).lastIndexOf('/') + 1);
+            String values = failed.group(5);
+            String replacement = indentOf(lines.get(statement.first())) + (values.isEmpty() ? "vsFailedAssert(\"" : "vsFailedAssertF(\"")
+                + failed.group(1) + "\", \"" + failed.group(2) + "\"" + values + "); // " + file + " line " + number(failed.group(4));
+
+            replace(lines, statement.first(), statement.last(), replacement);
+        }
+    }
+
+    // vsSingleton<T>::Instance() copied in: if (vsSingleton<T>::s_instance == 0) { ask vsSingletonManager, or assert
+    // "No instance of %s?" in VS_Singleton.h } then the code reads s_instance. Folded, the reads are Instance().
+    private static void foldSingletons(List<String> lines) {
+        for (int index = 0; index < lines.size(); index++) {
+            Matcher check = SINGLETON_CHECK.matcher(lines.get(index).trim());
+
+            if (!check.matches()) {
+                continue;
+            }
+
+            int close = closingBraceLine(lines, index);
+            String block = close < 0 ? "" : String.join("\n", lines.subList(index, close + 1));
+
+            // The message is made with tinyformat or a stream copied in; either way the assert names VS_Singleton.h.
+            if (!block.contains("VS_Singleton.h") || !block.contains("vsFailedAssert")) {
+                continue;
+            }
+
+            String instance = "vsSingleton<" + check.group(1) + ">::s_instance";
+            int last = close;
+            Matcher label = close + 1 < lines.size() ? Pattern.compile("^(LAB_[0-9a-f]+):$").matcher(lines.get(close + 1).trim()) : null;
+
+            if (label != null && label.matches() && countOutside(lines, "goto " + label.group(1) + ";", index, close) == 0) {
+                last = close + 1;
+            }
+
+            remove(lines, index, last);
+
+            // The singleton manager read just before, for the lookup inside, has no other use.
+            Matcher manager = index > 0 ? Pattern.compile("^(\\w+) = vsSingletonManager::s_instance;$").matcher(lines.get(index - 1).trim()) : null;
+
+            if (manager != null && manager.matches() && countOutside(lines, manager.group(1), index - 1, index - 1) == 0) {
+                lines.remove(index - 1);
+                index--;
+            }
+
+            for (int after = index; after < lines.size(); after++) {
+                lines.set(after, lines.get(after).replace(instance, "vsSingleton<" + check.group(1) + ">::Instance()"));
+            }
+
+            index--;
+        }
+    }
+
+    // The line holding the brace that closes the one opening this line; braces inside strings don't count.
+    static int closingBraceLine(List<String> lines, int open) {
+        int depth = 0;
+
+        for (int index = open; index < lines.size(); index++) {
+            boolean inString = false;
+            String line = lines.get(index);
+
+            for (int at = 0; at < line.length(); at++) {
+                char character = line.charAt(at);
+
+                if (character == '"' && (at == 0 || line.charAt(at - 1) != '\\')) {
+                    inString = !inString;
+                } else if (!inString && character == '{') {
+                    depth++;
+                } else if (!inString && character == '}' && --depth == 0) {
+                    return index;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    // How many lines outside first..last mention the word, not counting declarations.
+    private static int countOutside(List<String> lines, String word, int first, int last) {
+        Pattern mention = Pattern.compile("(?<![\\w])" + Pattern.quote(word) + "(?![\\w])");
+        int count = 0;
+
+        for (int index = 0; index < lines.size(); index++) {
+            boolean outside = index < first || index > last;
+
+            if (outside && !DECLARATION.matcher(lines.get(index)).matches() && mention.matcher(lines.get(index)).find()) {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     // __dynamic_cast(prop, &mmoProp::typeinfo, &mmoScenery::typeinfo, 0) is dynamic_cast<mmoScenery*>(prop).
@@ -427,6 +887,19 @@ final class MT2Fold {
     }
 
     // A temporary std::string destroyed on its own: the source never wrote that.
+    // if (local_48 != local_38) { operator_delete(local_48, local_38[0] + 1); }, or with std::string's names:
+    // if (message.text != message.buffer) { operator_delete(message.text, ... + 1); }. A string only frees its text
+    // when it's longer than its own buffer.
+    private static boolean isStringFree(String check, String free) {
+        if (check.matches("if \\((\\w+)(\\[0\\])? != (\\w+)\\) \\{")) {
+            return free.matches("operator_delete\\(\\w+(\\[0\\])?,\\w+(\\[0\\])? \\+ 1\\);");
+        }
+
+        Matcher named = Pattern.compile("^if \\(([\\w.>\\[\\]-]+)\\.text != (?:&?\\1\\.buffer|\\w+)\\) \\{$").matcher(check);
+
+        return named.matches() && free.startsWith("operator_delete(" + named.group(1) + ".text,") && free.endsWith("+ 1);");
+    }
+
     private static void foldStringCleanup(List<String> lines) {
         for (int pass = 0; pass < 500; pass++) {
             List<Statement> statements = statements(lines);
@@ -438,8 +911,7 @@ final class MT2Fold {
                 if (statement.text().matches("std::string::_M_dispose\\(.*\\);")) {
                     remove(lines, statement.first(), statement.last());
                     removed = true;
-                } else if (index + 2 < statements.size() && statement.text().matches("if \\((\\w+)(\\[0\\])? != (\\w+)\\) \\{")
-                    && statements.get(index + 1).text().matches("operator_delete\\(\\w+(\\[0\\])?,\\w+(\\[0\\])? \\+ 1\\);")
+                } else if (index + 2 < statements.size() && isStringFree(statement.text(), statements.get(index + 1).text())
                     && statements.get(index + 2).text().equals("}")) {
                     remove(lines, statement.first(), statements.get(index + 2).last());
                     removed = true;
@@ -734,7 +1206,7 @@ final class MT2Fold {
     }
 
     // Labels inside a folded stretch mustn't be jumped to from outside it.
-    private static boolean labelsStayInside(List<Statement> statements, int first, int last) {
+    static boolean labelsStayInside(List<Statement> statements, int first, int last) {
         for (int index = first; index <= last; index++) {
             Matcher label = Pattern.compile("^(LAB_[0-9a-f]+):$").matcher(statements.get(index).text());
 
@@ -768,27 +1240,91 @@ final class MT2Fold {
         }
     }
 
-    // Declarations of Ghidra's locals that nothing uses any more.
-    private static void dropUnusedLocals(List<String> lines) {
-        String all = String.join("\n", lines);
+    // Bytes cleared one by one (text[0] = '\0'; text[1] = '\0'; ... text[0xf] = '\0';) are one memset(text, 0, 16).
+    private static void foldZeroRuns(List<String> lines) {
+        Pattern zero = Pattern.compile("^(\\s*)([A-Za-z_][\\w.]*)\\[(0x[0-9a-f]+|\\d+)\\] = (?:'\\\\0'|0);$");
 
-        for (int index = lines.size() - 1; index >= 0; index--) {
-            Matcher declaration = DECLARATION.matcher(lines.get(index));
+        for (int index = 0; index < lines.size(); index++) {
+            Matcher first = zero.matcher(lines.get(index));
 
-            if (!declaration.matches() || !GHIDRA_LOCAL.matcher(declaration.group(3)).matches()) {
+            if (!first.matches()) {
                 continue;
             }
 
-            Matcher uses = Pattern.compile("\\b" + Pattern.quote(declaration.group(3)) + "\\b").matcher(all);
-            int count = 0;
+            long start = number(first.group(3));
+            int end = index + 1;
 
-            while (uses.find()) {
-                count++;
+            while (end < lines.size()) {
+                Matcher next = zero.matcher(lines.get(end));
+
+                if (!next.matches() || !next.group(2).equals(first.group(2)) || number(next.group(3)) != start + (end - index)) {
+                    break;
+                }
+
+                end++;
             }
 
-            if (count <= 1) {
+            int count = end - index;
+
+            if (count < 4) {
+                continue;
+            }
+
+            String target = start == 0 ? first.group(2) : first.group(2) + " + " + start;
+
+            replace(lines, index, end - 1, first.group(1) + "memset(" + target + ", 0, " + count + ");");
+        }
+    }
+
+    // An object's vtable set by the compiler (a constructor sets its class's, a destructor its base's on the way down):
+    // the source never wrote it. Kept for a local, where it's the only sign of what the local is.
+    private static void dropVtableWrites(List<String> lines) {
+        for (int index = lines.size() - 1; index >= 0; index--) {
+            Matcher write = VTABLE_WRITE.matcher(lines.get(index));
+
+            if (write.matches() && !LOCAL_MENTION.matcher(write.group(1)).find()) {
                 lines.remove(index);
             }
+        }
+    }
+
+    // Declarations, at the top of the body, of locals that nothing uses any more.
+    private static void dropUnusedLocals(List<String> lines) {
+        int end = 1;
+
+        while (end < lines.size() && !lines.get(end).trim().isEmpty()) {
+            end++;
+        }
+
+        // Without locals Ghidra leaves no blank line: the body is all statements.
+        if (end == lines.size()) {
+            return;
+        }
+
+        for (int index = end - 1; index >= 1; index--) {
+            Matcher declaration = DECLARATION.matcher(lines.get(index));
+
+            if (!declaration.matches()) {
+                continue;
+            }
+
+            // A use is the name itself, not a field that shares it (items against (this->costumePart).items), and not
+            // the declaration (allocator *allocator names it twice).
+            Pattern use = Pattern.compile("(?<![\\w.>])" + Pattern.quote(declaration.group(3)) + "\\b");
+            boolean used = false;
+
+            for (int other = 0; other < lines.size() && !used; other++) {
+                used = other != index && use.matcher(lines.get(other)).find();
+            }
+
+            if (!used) {
+                lines.remove(index);
+            }
+        }
+
+        // No locals left: nor the blank line after them.
+        if (lines.size() > 1 && lines.get(1).trim().isEmpty()) {
+            lines.remove(1);
         }
     }
 

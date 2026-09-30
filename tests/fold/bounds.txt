@@ -1,0 +1,53 @@
+{
+  int index;
+  int local_2d0;
+  int local_2cc;
+  std::string local_2c8;
+  std::string local_2a8;
+  std::string local_288;
+  char **local_208;
+  char **appuStack_200 [2];
+  locale local_1c8 [8];
+  char **local_198 [16];
+  int *local_258;
+  int *local_240;
+  std::string *local_228;
+  code *code;
+  code *code2;
+  long long lVar2;
+  char *pcVar6;
+
+  index = 0;
+  do {
+    local_2d0 = index;
+    if ((index < 0) || (*(int *)(lVar2 + 0x108) <= index)) {
+      local_2c8.length = 8;
+      builtin_strncpy(local_2c8.buffer,"7vsColor",9);
+      local_2c8.text = local_2c8.buffer;
+      Demangle(&local_2a8,&local_2c8);
+      local_2cc = *(int *)(lVar2 + 0x108);
+      std::ostringstream::ostringstream((ostringstream *)&local_208);
+      local_258 = &local_2d0;
+      local_240 = &local_2cc;
+      local_228 = &local_2a8;
+      code = tinyformat::detail::FormatArg::formatImpl<int>;
+      code2 = tinyformat::detail::FormatArg::toIntImpl<int>;
+      tinyformat::detail::formatImpl
+                ((ostream *)&local_208,
+                 "Out of bounds vsArray access: requested element %d, capacity of %d (array of %s)",
+                 (FormatArg *)&local_258,3);
+      std::stringbuf::str(&local_288,(stringbuf *)appuStack_200);
+      local_198[0] = &PTR__ostringstream_14178b110;
+      appuStack_200[0] = &PTR__streambuf_14178c0b0;
+      local_1c8->~locale();
+      local_198->~ios_base();
+      vsFailedAssert("id >= 0 && id < m_arrayLength",local_288.text,
+                     "../code/vectorstorm/VS/Utils/VS_Array.h",0x104);
+      if (local_288.text != pcVar6) {
+        operator_delete(local_288.text,local_288.buffer._0_8_ + 1);
+      }
+    }
+    index = index + 1;
+  } while (index < 4);
+  return;
+}
