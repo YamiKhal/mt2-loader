@@ -7,9 +7,7 @@
 
 #include <algorithm>
 #include <array>
-#include <cstddef>
 #include <cstdint>
-#include <format>
 #include <optional>
 #include <string>
 #include <vector>
@@ -26,22 +24,14 @@ struct Point {
     float y;
 };
 
-// As the engine lays out a vsArray: its class, the items, how many, and room for how many.
-template<class Item>
-struct GameArray {
-    const void* array_class;
-    const Item* items;
-    std::int32_t count;
-    std::int32_t capacity;
-};
-
 static game::Function<bool(const void* tool, const game::String& type)> tool_lists{ "mmoCursorBehaviourGizmo::_ShouldDisplayType" };
 static game::Function<void(void* tool)> activate{ "mmoCursorBehaviourGizmo::Activate" };
 static game::Function<void(void* tool)> deactivate{ "mmoCursorBehaviourGizmo::Deactivate" };
 static game::Function<void*(const game::String& name)> window_named{ "mmoWindow::Find" };
-static game::Function<void(void* window, bool shown, bool instantly)> show{ "_ZN9mmoWindow4ShowEbb" };
+static game::Function<void(void* window, bool shown, bool instantly)> show{ "mmoWindow::Show(bool, bool)" };
 static game::Function<void(void* window, const game::String& title)> set_title{ "mmoCharacterThemeWindow::SetTitle" };
-static game::Function<void(void* window, const void* collections, const void* kinds, const game::String& edit)> set_types{ "mmoCharacterThemeWindow::SetTypes" };
+static game::Function<void(void* window, const game::Array<const void*>& collections, const game::Array<std::int32_t>& kinds,
+    const game::String& edit)> set_types{ "mmoCharacterThemeWindow::SetTypes" };
 static game::Function<void*(void* window)> selection_in{ "mmoCharacterThemeWindow::GetSelection" };
 static game::Function<void(void* window, void* type)> select{ "mmoCharacterThemeWindow::SetSelection" };
 static game::Function<void(void* window)> reposition{ "mmoWindow::RepositionBasedUponAnchor" };
@@ -95,10 +85,6 @@ static void move_list_back() {
     reposition(list);
 }
 
-static const void* array_class(const char* array) {
-    return (game::find(std::format("vtable for {}", array)) + static_cast<std::ptrdiff_t>(2 * sizeof(void*))).get();
-}
-
 // The window's pick if it's one of the MMO's characters, else the last one, else the first.
 static character_types::Named pick(void* window) {
     std::vector<character_types::Named> characters = character_types::all();
@@ -127,12 +113,10 @@ static void open(void* window) {
     std::array<std::int32_t, character_types::kinds.size()> kinds{};
     std::ranges::transform(character_types::kinds, kinds.begin(), &character_types::Kind::number);
 
-    GameArray<const void*> collection_list{ array_class("vsArray<mmoCharacterTypeCollection*>"), collections.data(), 1, 1 };
-    GameArray<std::int32_t> kind_list{ array_class("vsArray<CharacterType>"), kinds.data(),
-        static_cast<std::int32_t>(kinds.size()), static_cast<std::int32_t>(kinds.size()) };
 
     set_title(window, game::String(window_title));
-    set_types(window, &collection_list, &kind_list, game::String(edit_command));
+    set_types(window, game::Array<const void*>("vsArray<mmoCharacterTypeCollection*>", collections),
+        game::Array<std::int32_t>("vsArray<CharacterType>", kinds), game::String(edit_command));
     select(window, picked);
     show(window, true, false);
 }

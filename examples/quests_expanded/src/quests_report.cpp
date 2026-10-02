@@ -3,7 +3,6 @@
 #include "branch_pull.h"
 #include "chapter_buzz.h"
 #include "chapter_quality.h"
-#include "layout.h"
 #include "line_stats.h"
 #include "line_titles.h"
 #include "quest.h"
@@ -447,7 +446,7 @@ void install() {
     });
 
     game::in("mmoWindow::UpdateUI").after([](void* window, float seconds) {
-        if (window != report || !game::field<bool>(window, static_cast<std::size_t>(layout.pane_visible))) {
+        if (window != report || !game::field<bool>(window, "mmoPane::visible")) {
             return;
         }
 

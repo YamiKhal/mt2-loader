@@ -12,6 +12,10 @@ typedef bool (*ReferenceTest)(const uint8_t* target, const void* context);
 // Decodes the instruction at address: its length, the number written in it, and what it refers to.
 bool code_decode(const void* address, Instruction* instruction);
 
+// The offset in the instruction's memory operand, 0x1a8 in lea rbp, [rcx + 0x1a8]: false when it has none (only
+// registers, or a rip-relative global).
+bool code_memory_displacement(const void* address, int64_t* displacement);
+
 // Length of the x64 instruction at address, or 0 if it can't be read or decoded.
 size_t code_instruction_length(const void* address);
 

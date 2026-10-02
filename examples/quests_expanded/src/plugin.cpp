@@ -3,7 +3,6 @@
 #include "dungeon_runs.h"
 #include "hand_ins.h"
 #include "hand_offs.h"
-#include "layout.h"
 #include "level_gates.h"
 #include "line_extensions.h"
 #include "line_finish.h"
@@ -36,7 +35,6 @@
 
 void plugin::init() {
     read_settings();
-    read_layout();
 
     main_thread::install();
     retracing::install();
@@ -71,11 +69,5 @@ void plugin::init() {
     quests_report::install();
 
     plugin::log("Quest givers hand players on to each other, and the main questline leads them (main questline preference {}%, "
-        "repeat cooldown {} days; pane visibility at +{:#x}, tooltip at +{:#x}, card quest at +{:#x}, advertisement needs at +{:#x} +{:#x}, "
-        "quest advertisement at +{:#x}, region NPCs at +{:#x} +{:#x}, demand change keys at +{:#x})",
-        settings.main_preference, settings.repeat_cooldown_days, layout.pane_visible, layout.button_tooltip, layout.card_quest,
-        layout.advance_need, layout.loot_need, layout.quest_advertisement, layout.region_npcs, layout.npc_list,
-        layout.demand_change_keys);
-    plugin::log("Dungeons to clear (entrance's dungeon at +{:#x}, run's dungeon at +{:#x})",
-        layout.building_dungeon, layout.run_dungeon);
+        "repeat cooldown {} days)", settings.main_preference, settings.repeat_cooldown_days);
 }

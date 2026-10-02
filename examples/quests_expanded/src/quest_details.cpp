@@ -1,6 +1,5 @@
 #include "quest_details.h"
 
-#include "layout.h"
 #include "objectives.h"
 #include "quest.h"
 #include "questlines.h"
@@ -140,7 +139,7 @@ void install() {
     // The window belongs to the card being edited: it closes once that card isn't selected (another is, or another
     // NPC is shown), or the cards are hidden.
     game::in("mmoQuestList::SetSelected").after([](void*, void* card) {
-        if (card == nullptr || weak_object(card, layout.card_quest) != shown_quest) {
+        if (card == nullptr || game::field<game::WeakPointer>(card, "mmoQuestSelector::quest").get() != shown_quest) {
             close();
         }
     });
@@ -150,7 +149,7 @@ void install() {
     });
 
     // A quest destroyed while its window is open (the card's undo destroys and remakes them too).
-    game::in("_ZN8mmoQuestD1Ev").before([](void* quest) {
+    game::on_destroy("mmoQuest", [](void* quest) {
         if (quest == shown_quest) {
             shown_quest = nullptr;
         }

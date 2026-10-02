@@ -143,6 +143,28 @@ bool code_decode(const void* address, Instruction* instruction) {
     return true;
 }
 
+bool code_memory_displacement(const void* address, int64_t* displacement) {
+    hde64s decoded;
+
+    if (!decode(address, &decoded) || !(decoded.flags & F_MODRM) || decoded.modrm_mod == MODRM_REGISTER) {
+        return false;
+    }
+
+    if (decoded.modrm_mod == 0 && decoded.modrm_rm == MODRM_RIP_RELATIVE_RM) {
+        return false;
+    }
+
+    if (decoded.flags & F_DISP8) {
+        *displacement = (int8_t)decoded.disp.disp8;
+    } else if (decoded.flags & F_DISP32) {
+        *displacement = (int32_t)decoded.disp.disp32;
+    } else {
+        *displacement = 0;
+    }
+
+    return true;
+}
+
 size_t code_instruction_length(const void* address) {
     hde64s instruction;
 

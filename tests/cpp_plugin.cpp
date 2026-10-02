@@ -199,7 +199,7 @@ static void check_reflection() {
         check("field text as a number", error_of([&] { game::field<int>(toon, "FakeToon::name"); }).find("is text in the game") != std::string::npos);
         check("field pointer as a number", error_of([&] { game::field<int>(first, "FakeSubscriber::main"); }).find("is a pointer to FakeToon") != std::string::npos);
         check("field missing", error_of([&] { game::field<int>(first, "FakeSubscriber::nothing"); })
-            .find("FakeSubscriber has no saved field called 'nothing'") != std::string::npos);
+            .find("FakeSubscriber has no field called 'nothing'") != std::string::npos);
         check("list bounds", subscribers.size() == 2 && throws([&] { subscribers[2]; }));
         check("field link", game::field<game::Link>(first, "FakeSubscriber::favorite").get() == toon);
         check("field link to an object that's gone", !game::field<game::Link>(subscribers[1], "FakeSubscriber::favorite"));

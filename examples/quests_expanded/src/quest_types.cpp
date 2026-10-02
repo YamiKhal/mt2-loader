@@ -1,6 +1,5 @@
 #include "quest_types.h"
 
-#include "layout.h"
 #include "objectives.h"
 #include "quest_details.h"
 #include "questlines.h"
@@ -30,7 +29,7 @@ static std::vector<std::string> choices() {
 
 static void fill(void* card) {
     void* dropdown = ui::find_pane(card, dropdown_id);
-    void* quest = weak_object(card, layout.card_quest);
+    void* quest = game::field<game::WeakPointer>(card, "mmoQuestSelector::quest").get();
 
     if (dropdown == nullptr || quest == nullptr || busy) {
         return;
@@ -52,7 +51,7 @@ static void fill(void* card) {
 
 static void pick(void* card) {
     void* dropdown = ui::find_pane(card, dropdown_id);
-    void* quest = weak_object(card, layout.card_quest);
+    void* quest = game::field<game::WeakPointer>(card, "mmoQuestSelector::quest").get();
 
     if (dropdown == nullptr || quest == nullptr) {
         return;

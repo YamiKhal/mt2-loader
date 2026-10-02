@@ -61,7 +61,7 @@ namespace quest_owners {
 
 // A player who leaves takes the records with them: what was found goes, before its player is read again.
 void install() {
-    game::in("_ZN7mmoToonD1Ev").before([](void*) {
+    game::on_destroy("mmoToon", [](void*) {
         std::lock_guard forgetting(owners_lock);
         owners.clear();
     });

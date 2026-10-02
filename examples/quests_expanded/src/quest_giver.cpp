@@ -1,7 +1,5 @@
 #include "quest_giver.h"
 
-#include "layout.h"
-
 #include <mt2loader.hpp>
 
 #include <cstddef>
@@ -9,19 +7,9 @@
 // mmoNPC::Type
 constexpr int quest_giver_type = 0;
 
-static game::Function<void*(const void* object, const void* from_type, const void* to_type, std::ptrdiff_t hint)> dynamic_cast_to{ "__dynamic_cast" };
-
 
 static bool is_quest_giver(const void* npc) {
     return game::field<int>(npc, "mmoNPC::type") == quest_giver_type && quest_giver::quest_count(npc) > 0;
-}
-
-// As the game checks what a quest's target is (mmoQuest::DefaultQuestActionForDestination).
-static void* as_npc(void* destination) {
-    static const game::Address destination_type = game::find("typeinfo for mmoQuestDestination");
-    static const game::Address npc_type = game::find("typeinfo for mmoNPC");
-
-    return dynamic_cast_to(destination, destination_type.get(), npc_type.get(), 0);
 }
 
 
@@ -36,13 +24,13 @@ std::vector<void*> all() {
     }
 
     for (void* region : game::field<game::Objects>(map, "mmoMap::region")) {
-        void* npcs = game::field<void*>(region, static_cast<std::size_t>(layout.region_npcs));
+        void* npcs = game::field<void*>(region, "mmoRegion::npcs");
 
         if (npcs == nullptr) {
             continue;
         }
 
-        for (void* npc : game::field<game::Objects>(npcs, static_cast<std::size_t>(layout.npc_list))) {
+        for (void* npc : game::field<game::Objects>(npcs, "mmoNPCManager::type")) {
             if (npc != nullptr && is_quest_giver(npc)) {
                 givers.push_back(npc);
             }
@@ -53,11 +41,7 @@ std::vector<void*> all() {
 }
 
 void* at_destination(void* destination) {
-    if (destination == nullptr) {
-        return nullptr;
-    }
-
-    void* npc = as_npc(destination);
+    void* npc = game::as(destination, "mmoNPC");
 
     return npc != nullptr && is_quest_giver(npc) ? npc : nullptr;
 }

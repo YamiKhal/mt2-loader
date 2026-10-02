@@ -24,6 +24,7 @@ int command_diff(const wchar_t* exe, const wchar_t* old_exe, const wchar_t* mapp
 int command_reference(const wchar_t* exe, const wchar_t* folder, const wchar_t* mappings_folder);
 int command_mappings_check(const wchar_t* exe, const wchar_t* folder);
 int command_mappings_json(const wchar_t* exe, const wchar_t* folder, const wchar_t* output);
+int command_mappings_fields(const wchar_t* folder, const wchar_t* output);
 int command_mappings_import(const wchar_t* exe, const wchar_t* found_path, const wchar_t* folder);
 int command_stats(const wchar_t* workspace);
 int command_snapshot(const wchar_t* action, const wchar_t* workspace, const wchar_t* exe, const wchar_t* ghidra, const wchar_t* mappings);

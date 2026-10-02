@@ -15,6 +15,7 @@
 #include <windows.h>
 
 #include "../src/core/game_build.h"
+#include "../src/core/mapped_fields.h"
 #include "../src/core/plugin_api.h"
 #include "../src/core/saved_data.h"
 #include "../src/core/symbols.h"
@@ -85,6 +86,39 @@ static void print_saves(HMODULE exe, const wchar_t* class_name) {
     printf("saves %s: %s\n", name, kept ? "yes" : "no");
 }
 
+static bool print_field(const PluginApi* api, const char* name) {
+    size_t offset = 0;
+    char type[256] = "";
+    char problem[1024] = "";
+
+    if (api->mapped_field(api, name, &offset, type, sizeof type, problem, sizeof problem)) {
+        printf("field %s: +0x%zx %s\n", name, offset, type);
+
+        return true;
+    }
+
+    printf("field %s: %s\n", name, problem[0] != '\0' ? problem : "not mapped");
+
+    return false;
+}
+
+static void print_all_fields(const PluginApi* api) {
+    int confirmed = 0;
+    int failed = 0;
+
+    for (const MappedField* field = MAPPED_FIELDS; field->name != NULL; field++) {
+        bool first_place = field == MAPPED_FIELDS || strcmp(field[-1].name, field->name) != 0;
+
+        if (first_place && print_field(api, field->name)) {
+            confirmed++;
+        } else if (first_place) {
+            failed++;
+        }
+    }
+
+    printf("mapped fields: %d confirmed, %d not\n", confirmed, failed);
+}
+
 int wmain(int argc, wchar_t** argv) {
     if (argc < 4) {
         fwprintf(stderr, L"usage: probe_plugin_real_exe <MT2.exe> <plugin.dll> <mod id> [rva ...]\n");
@@ -142,6 +176,27 @@ int wmain(int argc, wchar_t** argv) {
     for (int index = 4; index < argc; index++) {
         if (wcsncmp(argv[index], L"saves:", 6) == 0) {
             print_saves(exe, argv[index] + 6);
+
+            continue;
+        }
+
+        char text[512];
+        WideCharToMultiByte(CP_UTF8, 0, argv[index], -1, text, sizeof text, NULL, NULL);
+
+        if (strncmp(text, "field:", 6) == 0) {
+            print_field(&api, text + 6);
+
+            continue;
+        }
+
+        if (strcmp(text, "mapped:all") == 0) {
+            print_all_fields(&api);
+
+            continue;
+        }
+
+        if (strncmp(text, "size:", 5) == 0) {
+            printf("size %s: 0x%zx\n", text + 5, api.class_size(&api, text + 5));
 
             continue;
         }

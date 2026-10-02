@@ -11,7 +11,7 @@ CXXFLAGS="-std=c++20 -O2 -Wall -Wextra -Werror -Wpedantic"
 # As the project template links a plugin: no runtime DLLs to ship.
 CXX_STATIC="-static -static-libgcc -static-libstdc++"
 CORE_CFLAGS="$CFLAGS -D__USE_MINGW_ANSI_STDIO=1 -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00"
-CORE_SOURCES="src/core/*.c src/common/*.c third_party/minhook/src/*.c third_party/minhook/src/hde/hde64.c"
+CORE_SOURCES="src/core/*.c build/mapped_fields.c src/common/*.c third_party/minhook/src/*.c third_party/minhook/src/hde/hde64.c"
 VERSION="$(sed -n 's/#define MT2LOADER_VERSION "\(.*\)"/\1/p' "$ROOT/src/include/mt2loader_version.h")"
 
 failures=0
@@ -34,7 +34,7 @@ build_fixtures() {
     gcc $CFLAGS -municode tests/quiet_launcher.c -o "$BUILD/bin/quiet_launcher.exe" || exit 1
     gcc $CORE_CFLAGS -municode tests/probe_real_exe.c src/common/import_patch.c src/core/game_build.c src/core/text_check.c \
         src/common/pe_image.c -o "$BUILD/bin/probe_real_exe.exe" || exit 1
-    gcc $CORE_CFLAGS -Ithird_party/minhook/include -municode tests/probe_plugin_real_exe.c $CORE_SOURCES build/libcjson_private.a \
+    gcc $CORE_CFLAGS -Ithird_party/minhook/include -Isrc/core -municode tests/probe_plugin_real_exe.c $CORE_SOURCES build/libcjson_private.a \
         -l:libiberty.a -lshell32 -o "$BUILD/bin/probe_plugin_real_exe.exe" || exit 1
     build_test_core
     build_plugins
@@ -50,6 +50,7 @@ build_plugins() {
     g++ $CXXFLAGS -Isdk/include -shared $CXX_STATIC -s examples/dungeon_captives/src/*.cpp -o "$BUILD/bin/dungeon_captives.dll" || exit 1
     g++ $CXXFLAGS -Isdk/include -shared $CXX_STATIC -s tests/cpp_plugin.cpp -o "$BUILD/bin/cpp_plugin.dll" || exit 1
     g++ $CXXFLAGS -Isdk/include -shared $CXX_STATIC -s tests/settings_plugin.cpp -o "$BUILD/bin/settings_plugin.dll" || exit 1
+    g++ $CXXFLAGS -Isdk/include -shared $CXX_STATIC -s tests/real_exe_api_plugin.cpp -o "$BUILD/bin/real_exe_api_plugin.dll" || exit 1
     gcc $CFLAGS -Isdk/include -shared -static-libgcc -s tests/api_plugin.c -o "$BUILD/bin/api_plugin.dll" || exit 1
     build_msvc_plugins
 }
@@ -75,7 +76,7 @@ build_test_core() {
     local image_size
     image_size="$(objdump -p "$BUILD/bin/MT2.exe" | awk '/SizeOfImage/ { print $2 }')"
 
-    gcc $CORE_CFLAGS -Ithird_party/minhook/include -DMT2LOADER_TEST_IMAGE_SIZE=0x"$image_size" $CORE_SOURCES \
+    gcc $CORE_CFLAGS -Ithird_party/minhook/include -Isrc/core -DMT2LOADER_TEST_IMAGE_SIZE=0x"$image_size" $CORE_SOURCES \
         -shared -static-libgcc -s build/libcjson_private.a -l:libiberty.a -lshell32 -o "$BUILD/bin/test_core/mt2loader.dll" || exit 1
 }
 
@@ -625,18 +626,28 @@ test_real_exe() {
     check "real exe: values kept on quest givers" grep -q "^saves mmoNPC: yes$" <<< "$output"
     check "real exe: values kept on players" grep -q "^saves mmoToon: yes$" <<< "$output"
 
-    # The Quests Expanded mod: each call it changes is the only one of its kind, and it reads from the game's own code where
-    # the game keeps what has no saved name.
+    # The Quests Expanded mod: each call it changes is the only one of its kind. What the game doesn't name, it reaches by
+    # the names mt2-mappings gives it, each confirmed in the game's code.
     rm -rf "$BUILD/probe_quests_expanded"
     mkdir -p "$BUILD/probe_quests_expanded/native"
     cp examples/quests_expanded/mod/config.json "$BUILD/probe_quests_expanded/"
     cp "$BUILD/bin/quests_expanded.dll" "$BUILD/probe_quests_expanded/native/"
-    output="$("$BUILD/bin/probe_plugin_real_exe.exe" "$(cygpath -w "$MT2_EXE")" "$(cygpath -w "$BUILD/probe_quests_expanded/native/quests_expanded.dll")" quests_expanded 3ec662 3ec555 3ec58b 3e277b 3ec7ac 3eb27b 3ec792 45b652 saves:mmoCustomRules)"
+    local quests_fields=("field:mmoPane::visible" "field:mmoButtonPane::tooltipPane" "field:mmoQuestSelector::quest" "field:mmoAdvertisement::action"
+        "field:mmoAdvertisement::advanceNeed" "field:mmoAdvertisement::lootNeed" "field:mmoAdvertisement::position" "field:mmoNPCAdvertisement::npc"
+        "field:mmoQuest::advertisement" "field:mmoRegion::npcs" "field:mmoReleaseDemand::changeKeys" "field:mmoToonDoQuestAction::toon"
+        "field:mmoToonDoQuestAction::quest" "field:mmoQuestDisplay::quest" "field:mmoQuestDisplay::arrows" "field:mmoQuestList::npc"
+        "field:mmoToonPlanTask::toon" "field:mmoQuestAdvertisement::quest" "field:mmoArrow::from" "field:mmoArrow::to"
+        "field:mmoArrow::changed" "field:vsPool<T>::m_totalCount" "field:mmoObject::uid" "field:mmoBuilding::dungeon"
+        "field:mmoDungeonInstance::dungeon" "field:vsTransform3D::m_translation")
+    output="$("$BUILD/bin/probe_plugin_real_exe.exe" "$(cygpath -w "$MT2_EXE")" "$(cygpath -w "$BUILD/probe_quests_expanded/native/quests_expanded.dll")" quests_expanded 3ec662 3ec555 3ec58b 3e277b 3ec7ac 3eb27b 3ec792 45b652 saves:mmoCustomRules "${quests_fields[@]}")"
     code=$?
     echo "$output"
 
     check "real exe: Quests Expanded starts" exit_is "$code" 0
-    check "real exe: Quests Expanded reads the game's layout" grep -q "; pane visibility at +0x69, tooltip at +0x490, card quest at +0x3d8, advertisement needs at +0x108 +0x110, quest advertisement at +0x208, region NPCs at +0x998 +0x38, demand change keys at +0x28)$" <<< "$output"
+    check "real exe: every mapped field Quests Expanded uses is confirmed" exit_is "$(grep -c "^field .*: +0x" <<< "$output")" 26
+    check "real exe: a weak pointer's mapping" grep -q "^field mmoQuestSelector::quest: +0x3d8 vsWeakPointer<mmoQuest>$" <<< "$output"
+    check "real exe: a template's mapping" grep -q "^field vsPool<T>::m_totalCount: +0x18 int$" <<< "$output"
+    check "real exe: a destructor with its work copied in is watched twice" exit_is "$(grep -c "Hooked mmoDoSetNPCQuests::~mmoDoSetNPCQuests()" <<< "$output")" 2
     check "real exe: hand-ins take the quest they're given" grep -q "rva 003ec662: e8 .* -> the plugin" <<< "$output"
     check "real exe: hand-ins are given by offline quest givers too" grep -q "rva 003ec555: e8 .* -> the plugin" <<< "$output"
     check "real exe: level gates when taking a quest" grep -q "rva 003ec58b: e8 .* -> the plugin" <<< "$output"
@@ -659,18 +670,37 @@ test_real_exe() {
     check "real exe: custom rules make room while the game sizes its list" exit_is "$(grep -c "Hooked the call at mmoCustomRules::SetupGrid" <<< "$output")" 2
     check "real exe: custom rule added" grep -q "Custom rule \"quests_expanded_disable_story\" added" <<< "$output"
 
-    # The Dungeon Captives mod: it reads from the game's own code where gizmos keep their variants and characters their
-    # looks.
+    # The Dungeon Captives mod, and what it uses: a gizmo type's variants and a character type's colors from
+    # mt2-mappings, confirmed in the game's code, and the size of a character's model read from it.
     rm -rf "$BUILD/probe_dungeon_captives"
     mkdir -p "$BUILD/probe_dungeon_captives/native"
     cp "$BUILD/bin/dungeon_captives.dll" "$BUILD/probe_dungeon_captives/native/"
-    output="$("$BUILD/bin/probe_plugin_real_exe.exe" "$(cygpath -w "$MT2_EXE")" "$(cygpath -w "$BUILD/probe_dungeon_captives/native/dungeon_captives.dll")" dungeon_captives)"
+    output="$("$BUILD/bin/probe_plugin_real_exe.exe" "$(cygpath -w "$MT2_EXE")" "$(cygpath -w "$BUILD/probe_dungeon_captives/native/dungeon_captives.dll")" dungeon_captives \
+        field:mmoGizmoDefinition::variants field:mmoCharacterType::colors field:mmoCharacterType::nothing size:mmoActor size:mmoCharacterActor)"
     code=$?
     echo "$output"
 
     check "real exe: Dungeon Captives starts" exit_is "$code" 0
-    check "real exe: Dungeon Captives reads the game's layout" grep -q "(gizmo variants at +0xa8, actor 0x48 bytes, costume skeleton at +0x38, type colors at +0x18)$" <<< "$output"
+    check "real exe: mapped field confirmed" grep -q "^field mmoGizmoDefinition::variants: +0xa8 vsArrayStore<mmoGizmoVariant>$" <<< "$output"
+    check "real exe: mapped field of a plain type confirmed" grep -q "^field mmoCharacterType::colors: +0x18 int$" <<< "$output"
+    check "real exe: a field mt2-mappings lacks" grep -q "^field mmoCharacterType::nothing: not mapped$" <<< "$output"
+    check "real exe: a class's size from the game's code" grep -q "^size mmoActor: 0x48$" <<< "$output"
+    check "real exe: a bigger class's size" grep -q "^size mmoCharacterActor: 0xe0$" <<< "$output"
     check "real exe: captives are picked in the character window" exit_is "$(grep -c "Hooked mmoCursorBehaviourGizmo::\(Activate\|Update\|Deactivate\)" <<< "$output")" 5
+
+    # What the API reads from the game's code on its own: arrays' classes, a virtual function's slot, which destructors
+    # to watch.
+    rm -rf "$BUILD/probe_api"
+    mkdir -p "$BUILD/probe_api/native"
+    cp "$BUILD/bin/real_exe_api_plugin.dll" "$BUILD/probe_api/native/"
+    output="$("$BUILD/bin/probe_plugin_real_exe.exe" "$(cygpath -w "$MT2_EXE")" "$(cygpath -w "$BUILD/probe_api/native/real_exe_api_plugin.dll")" probe_api)"
+    code=$?
+    echo "$output"
+
+    check "real exe: API lookups start" exit_is "$code" 0
+    check "real exe: arrays of the game's types, spaces or not" grep -q "Arrays of the game's types found" <<< "$output"
+    check "real exe: a destructor whose work is copied into the deleting one" exit_is "$(grep -c "Hooked mmoDoSetNPCQuests::~mmoDoSetNPCQuests()" <<< "$output")" 2
+    check "real exe: a destructor the deleting one calls" exit_is "$(grep -c "Hooked mmoNPC::~mmoNPC()" <<< "$output")" 1
 }
 
 # The research commands against the real game, checked with what LOADER.md and the weapons example already know.
@@ -739,6 +769,7 @@ test_sdk_research() {
         output="$("$sdk" headers "$(cygpath -w "$BUILD/headers/mt2game.hpp")" --mappings "$(cygpath -w "$ROOT/../mt2-mappings")" --exe "$exe")"
         check "sdk headers: written" grep -q "classes written to" <<< "$output"
         check "sdk headers: the game's own field, by its name" grep -q 'inline int& mmoCharacter::level() const { return game::field<int>(self, "mmoCharacter::level"); }' "$BUILD/headers/mt2game.hpp"
+        check "sdk headers: a mapped field, by its mapped name" grep -q 'inline int& mmoCharacterType::colors() const { return game::field<int>(self, "mmoCharacterType::colors"); }' "$BUILD/headers/mt2game.hpp"
         check "sdk headers: an enum with the game's words" grep -q "enum class mmoNPC_State : int { Idle = 0, Combat = 1, Dead = 2 };" "$BUILD/headers/mt2game.hpp"
         g++ $CXXFLAGS -fsyntax-only -Isdk/include -I"$BUILD/headers" tests/game_classes_usage.cpp > "$BUILD/headers/compile.log" 2>&1
         check "sdk headers: compile with a plugin that uses them" exit_is "$?" 0

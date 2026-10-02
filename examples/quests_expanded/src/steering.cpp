@@ -1,7 +1,6 @@
 #include "steering.h"
 
 #include "branch_choices.h"
-#include "layout.h"
 #include "main_thread.h"
 #include "objectives.h"
 #include "parties.h"
@@ -167,12 +166,12 @@ static bool advance(void* toon, void* instance) {
 // How long a player reckons a quest takes to walk: to their next target, then round the rest of a tour. It runs on
 // the game's worker threads, so it reads only the saved game and the game (a branch's choice as kept).
 static float travel_time(float time, const void* plan, const void* advertisement) {
-    if (game::field<int>(advertisement, static_cast<std::size_t>(layout.advertisement_action)) != do_quest_advertisement) {
+    if (game::field<int>(advertisement, "mmoAdvertisement::action") != do_quest_advertisement) {
         return time;
     }
 
-    void* quest = game::field<void*>(advertisement, static_cast<std::size_t>(layout.advertised_quest));
-    void* toon = game::field<void*>(plan, static_cast<std::size_t>(layout.plan_toon));
+    void* quest = game::field<void*>(advertisement, "mmoQuestAdvertisement::quest");
+    void* toon = game::field<void*>(plan, "mmoToonPlanTask::toon");
     Objective objective = objectives::of(quest);
 
     if (toon == nullptr || objective == Objective::standard) {
@@ -181,7 +180,7 @@ static float travel_time(float time, const void* plan, const void* advertisement
 
     bool tour = objective == Objective::tour;
     void* target = tour ? tour_progress::current_target(toon, quest) : branch_choices::chosen(toon, quest);
-    float speed = game::field<float>(toon, static_cast<std::size_t>(layout.speed));
+    float speed = game::field<float>(toon, "mmoMapEntity::speed");
     std::vector<void*> targets = objectives::targets(quest);
 
     if (target == nullptr || speed <= 0.0f || targets.empty()) {
@@ -246,7 +245,7 @@ void install() {
     });
 
     game::in("mmoToonDoQuestAction::Tick").hook<void(void* action, float seconds)>([](auto tick, void* action, float seconds) {
-        void* toon = game::field<void*>(action, static_cast<std::size_t>(layout.action_toon));
+        void* toon = game::field<void*>(action, "mmoToonDoQuestAction::toon");
 
         if (toon == nullptr) {
             tick(action, seconds);
@@ -268,7 +267,7 @@ void install() {
     // The game walks the player to the quest's own target; a tour's player goes to their next one, a branch's to the
     // quest giver they take.
     game::in("mmoToonDoQuestAction::DoStart").before([](void* action, void*) {
-        starting_quest = weak_object(action, layout.action_quest);
+        starting_quest = game::field<game::WeakPointer>(action, "mmoToonDoQuestAction::quest").get();
     });
 
     game::in("mmoToonDoQuestAction::DoStart").call("mmoMapEntity::SetUpMoveToQuestDestination")

@@ -9,6 +9,9 @@ COMMON_SOURCES = src/common/pe_image.c src/common/import_patch.c
 PROXY_SOURCES = $(wildcard src/proxy/*.c) $(COMMON_SOURCES)
 MINHOOK_SOURCES = $(wildcard third_party/minhook/src/*.c) third_party/minhook/src/hde/hde64.c
 CORE_SOURCES = $(wildcard src/core/*.c) $(COMMON_SOURCES) $(MINHOOK_SOURCES)
+# The fields mt2-mappings names, built into the core so plugins can use them by name (mt2sdk mappings fields).
+MAPPINGS = ../mt2-mappings
+MAPPED_FIELDS = $(BUILD)/mapped_fields.c
 HEADERS = $(wildcard src/*/*.h) sdk/include/mt2loader.h sdk/include/mt2loader.hpp
 
 # MSYS2's static cJSON still carries dllexport directives; this copy without them keeps cJSON out of the core's exports.
@@ -38,11 +41,15 @@ $(CJSON):
 
 # The demangler is libiberty's cp-demangle.o alone (GPL with a linking exception, see THIRD_PARTY.txt).
 CORE_LIBS = $(CJSON) -l:libiberty.a -lshell32
-CORE_INCLUDES = -Ithird_party/minhook/include
+CORE_INCLUDES = -Ithird_party/minhook/include -Isrc/core
 
-$(CORE): $(CORE_SOURCES) $(HEADERS) $(CJSON)
+$(MAPPED_FIELDS): $(SDK_TOOL) $(wildcard $(MAPPINGS)/*/*.mapping)
+	@mkdir -p $(BUILD)
+	$(SDK_TOOL) mappings fields $(MAPPINGS) $@
+
+$(CORE): $(CORE_SOURCES) $(MAPPED_FIELDS) $(HEADERS) $(CJSON)
 	@mkdir -p $(DIST)/mt2loader
-	$(CC) $(CFLAGS) $(CORE_INCLUDES) $(CORE_SOURCES) $(LDFLAGS) $(CORE_LIBS) -o $@
+	$(CC) $(CFLAGS) $(CORE_INCLUDES) $(CORE_SOURCES) $(MAPPED_FIELDS) $(LDFLAGS) $(CORE_LIBS) -o $@
 
 # The SDK folder as plugin authors get it: mt2sdk.exe, the headers, and the project template.
 sdk: $(SDK_TOOL)

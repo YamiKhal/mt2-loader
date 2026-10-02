@@ -27,7 +27,8 @@ typedef enum Access {
     ACCESS_INSIDE,
 } Access;
 
-// One field as the header gives it: how it's reached (by the game's name, or by offset for a mapped one) and as what.
+// One field as the header gives it: how it's reached (by name, or by offset for a mapped one the loader can't check)
+// and as what.
 typedef struct Accessor {
     char name[NAME_CAPACITY];
     char lookup[NAME_CAPACITY];
@@ -78,7 +79,8 @@ static const KnownValue VALUE_TYPES[] = {
 static const char* const PREAMBLE =
     "// A C++ class for each of the game's classes, with a function for each of its fields: character.level(),\n"
     "// npc.state(), quest.questGiver(). Fields the game names for its saves are reached by those names, so they keep\n"
-    "// working after game updates; fields from mt2-mappings (marked) are reached by offset and can move with an update.\n"
+    "// working after game updates. Fields from mt2-mappings are reached by their mapped names, which the loader checks\n"
+    "// against the game's code; the few it can't check (marked) are reached by offset and can move with an update.\n"
     "// Each class wraps a pointer to the game's object: mt2::mmoNPC npc(pointer), and npc.get() gives it back.\n"
     "\n"
     "#pragma once\n"
@@ -300,9 +302,11 @@ static int collect_accessors(Generator* generator, const char* class_name, Acces
             const Note* doc = mappings_note(field, "doc");
             memset(accessor, 0, sizeof *accessor);
             accessor_name(field->name, accessor->name, sizeof accessor->name);
+            snprintf(accessor->lookup, sizeof accessor->lookup, "%s::%s", class_name, field->name);
             snprintf(accessor->game_type, sizeof accessor->game_type, "%s", field->type);
             accessor->offset = field->offset;
-            accessor->by_offset = true;
+            // The loader checks a mapped field at a place its code uses it; one without such a place can't be checked.
+            accessor->by_offset = mappings_note(field, "seen") == NULL;
             accessor->doc = doc != NULL ? doc->value : NULL;
             choose_access_for_mapped(generator, field->type, accessor);
             count++;

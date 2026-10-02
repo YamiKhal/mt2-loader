@@ -1,6 +1,5 @@
 #include "target_arrows.h"
 
-#include "layout.h"
 #include "objectives.h"
 #include "places.h"
 
@@ -39,9 +38,9 @@ static void point(TourArrow& arrow, void* target, void* giver) {
     if (!same(from, arrow.from) || !same(to, arrow.to)) {
         arrow.from = from;
         arrow.to = to;
-        game::field<Place>(arrow.arrow, static_cast<std::size_t>(layout.arrow_from)) = from;
-        game::field<Place>(arrow.arrow, static_cast<std::size_t>(layout.arrow_to)) = to;
-        game::field<bool>(arrow.arrow, static_cast<std::size_t>(layout.arrow_changed)) = true;
+        game::field<Place>(arrow.arrow, "mmoArrow::from") = from;
+        game::field<Place>(arrow.arrow, "mmoArrow::to") = to;
+        game::field<bool>(arrow.arrow, "mmoArrow::changed") = true;
     }
 
     if (!arrow.shown) {
@@ -59,7 +58,7 @@ static void hide(TourArrow& arrow) {
 
 // The quest's own target has the game's arrow; each of its other targets gets one of these.
 static void show_arrows(void* display) {
-    void* quest = weak_object(display, layout.displayed_quest);
+    void* quest = game::field<game::WeakPointer>(display, "mmoQuestDisplay::quest").get();
     void* giver = quest != nullptr ? game::field<game::Link>(quest, "mmoQuest::questGiver").get() : nullptr;
     std::vector<void*> targets = giver != nullptr ? objectives::targets(quest) : std::vector<void*>{};
     auto found = arrows_of.find(display);
@@ -72,7 +71,7 @@ static void show_arrows(void* display) {
     std::size_t wanted = targets.size() > 1 ? targets.size() - 1 : 0;
 
     while (arrows.size() < wanted) {
-        void* arrow = borrow_arrow(static_cast<std::byte*>(display) + layout.arrow_pool);
+        void* arrow = borrow_arrow(game::object_in(display, "mmoQuestDisplay::arrows"));
         put_on_scene(arrow, 0);
         arrows.push_back(TourArrow{ arrow, false, {}, {} });
     }
@@ -90,17 +89,13 @@ static void show_arrows(void* display) {
 // The pool checks every arrow it made came back: these are deleted as it would, and no longer counted.
 static void release_arrows(void* pool) {
     for (auto found = arrows_of.begin(); found != arrows_of.end(); ++found) {
-        if (static_cast<const std::byte*>(found->first) + layout.arrow_pool != pool) {
+        if (game::object_in(const_cast<void*>(found->first), "mmoQuestDisplay::arrows") != pool) {
             continue;
         }
 
         for (TourArrow& arrow : found->second) {
-            using Delete = void (*)(void* arrow);
-            void* const* table = *static_cast<void* const* const*>(arrow.arrow);
-            constexpr std::size_t deleting_destructor = 1;
-
-            reinterpret_cast<Delete>(table[deleting_destructor])(arrow.arrow);
-            game::field<int>(pool, static_cast<std::size_t>(layout.pool_count))--;
+            game::destroy(arrow.arrow);
+            game::field<int>(pool, "vsPool<mmoArrow>::m_totalCount")--;
         }
 
         arrows_of.erase(found);

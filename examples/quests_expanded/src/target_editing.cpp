@@ -1,6 +1,5 @@
 #include "target_editing.h"
 
-#include "layout.h"
 #include "objectives.h"
 #include "quest_details.h"
 #include "questlines.h"
@@ -20,7 +19,7 @@ void install() {
             return handled;
         }
 
-        if (void* quest = weak_object(card, layout.card_quest)) {
+        if (void* quest = game::field<game::WeakPointer>(card, "mmoQuestSelector::quest").get()) {
             quest_details::open(quest);
         }
 
@@ -28,7 +27,7 @@ void install() {
     });
 
     game::in("mmoQuestDisplay::SetNewDestination").hook<void(void* display, void* destination)>([](auto set, void* display, void* destination) {
-        void* quest = weak_object(display, layout.displayed_quest);
+        void* quest = game::field<game::WeakPointer>(display, "mmoQuestDisplay::quest").get();
 
         Objective objective = objectives::of(quest);
         std::vector<void*> targets = objectives::targets(quest);

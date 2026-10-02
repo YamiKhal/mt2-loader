@@ -1,13 +1,10 @@
 #include "dungeon_runs.h"
 
 #include "dungeon_quests.h"
-#include "layout.h"
 #include "parties.h"
 #include "player.h"
 
 #include <mt2loader.hpp>
-
-#include <cstddef>
 
 // mmoParty::Mode a grinding party the game sends into a dungeon is put in.
 constexpr int heading_for_dungeon = 2;
@@ -103,7 +100,7 @@ void install() {
             void* run = shard != nullptr ? run_in(shard) : nullptr;
 
             if (run != nullptr) {
-                clear_for_members(party, game::field<void*>(run, static_cast<std::size_t>(layout.run_dungeon)));
+                clear_for_members(party, game::field<void*>(run, "mmoDungeonInstance::dungeon"));
             }
 
             return done;

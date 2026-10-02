@@ -125,6 +125,75 @@ int command_symbols(const wchar_t* exe, const wchar_t* output) {
     return 0;
 }
 
+// A class's type information names it as its length and name ("12mmoCharacter"); templates go on with their arguments.
+static bool is_type_name(const char* text, size_t length) {
+    size_t digits = 0;
+    size_t name_length = 0;
+
+    while (digits < length && digits < 3 && isdigit((unsigned char)text[digits])) {
+        name_length = name_length * 10 + (size_t)(text[digits] - '0');
+        digits++;
+    }
+
+    if (digits == 0 || name_length == 0 || digits + name_length > length || !isalpha((unsigned char)text[digits])) {
+        return false;
+    }
+
+    for (size_t index = digits; index < digits + name_length; index++) {
+        if (!isalnum((unsigned char)text[index]) && text[index] != '_') {
+            return false;
+        }
+    }
+
+    return digits + name_length == length || text[digits + name_length] == 'I';
+}
+
+static IMAGE_NT_HEADERS64* headers_of(HMODULE module) {
+    return (IMAGE_NT_HEADERS64*)((uint8_t*)module + ((IMAGE_DOS_HEADER*)module)->e_lfanew);
+}
+
+static int count_type_names(HMODULE module) {
+    IMAGE_NT_HEADERS64* headers = headers_of(module);
+    IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(headers);
+    int count = 0;
+
+    for (int index = 0; index < headers->FileHeader.NumberOfSections; index++, section++) {
+        if (strncmp((const char*)section->Name, ".rdata", IMAGE_SIZEOF_SHORT_NAME) != 0) {
+            continue;
+        }
+
+        const char* start = (const char*)module + section->VirtualAddress;
+        const char* end = start + section->Misc.VirtualSize;
+
+        for (const char* text = start; text < end; text += strnlen(text, (size_t)(end - text)) + 1) {
+            count += is_type_name(text, strnlen(text, (size_t)(end - text))) ? 1 : 0;
+        }
+    }
+
+    return count;
+}
+
+// What a build still says about itself: names for its code, debug information, and its classes' type information.
+static void print_names_kept(HMODULE module) {
+    IMAGE_NT_HEADERS64* headers = headers_of(module);
+    IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(headers);
+    int debug_sections = 0;
+
+    for (int index = 0; index < headers->FileHeader.NumberOfSections; index++, section++) {
+        debug_sections += section->Name[0] == '/' ? 1 : 0;
+    }
+
+    if (headers->FileHeader.NumberOfSymbols > 0) {
+        printf("Names: a symbol table of %lu entries, so the game's functions and fields can be found by name\n",
+            headers->FileHeader.NumberOfSymbols);
+    } else {
+        printf("Names: stripped. Nothing in this build can be found by name, so plugins and these tools can't work on it\n");
+    }
+
+    printf("Debug information: %s\n", debug_sections > 0 ? "kept" : "stripped");
+    printf("Type information: about %d classes named\n", count_type_names(module));
+}
+
 int command_build(const wchar_t* exe) {
     wchar_t path[GAME_PATH_CAPACITY];
 
@@ -142,9 +211,10 @@ int command_build(const wchar_t* exe) {
     }
 
     GameBuild build = game_build_identify(module);
-    FreeLibrary(module);
 
     wprintf(L"%ls\n", path);
+    print_names_kept(module);
+    FreeLibrary(module);
 
     if (game_build_is_known(&build)) {
         printf("Game build %s: this loader knows it. Put \"%s\" in your manifest's game_builds\n", build.name, build.name);

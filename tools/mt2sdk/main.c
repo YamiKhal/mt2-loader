@@ -46,6 +46,7 @@ static const char* USAGE =
     "  mt2sdk mappings todo [workspace] [class]  the unnamed fields the most code uses, to name first\n"
     "  mt2sdk mappings cards [workspace] [class]  each of those with its neighbors and the lines that use it\n"
     "  mt2sdk mappings json <folder> [file]  the mappings as one JSON file, for other tools\n"
+    "  mt2sdk mappings fields <folder> <file.c>  the mapped fields as the loader's table, to build it with\n"
     "\n"
     "Options: --exe <path to MT2.exe> (found in the Steam libraries otherwise), --mappings <mt2-mappings folder>,\n"
     "         --ghidra <folder>, --all (decompile: the libraries' code too), --cpp and --raw (find)\n"
@@ -205,6 +206,10 @@ int wmain(int argc, wchar_t** argv) {
 
     if (wcscmp(command, L"mappings") == 0 && first != NULL && wcscmp(first, L"json") == 0 && second != NULL) {
         return command_mappings_json(exe, second, third != NULL ? third : L"mappings.json");
+    }
+
+    if (wcscmp(command, L"mappings") == 0 && first != NULL && wcscmp(first, L"fields") == 0 && second != NULL && third != NULL) {
+        return command_mappings_fields(second, third);
     }
 
     fputs(USAGE, stdout);

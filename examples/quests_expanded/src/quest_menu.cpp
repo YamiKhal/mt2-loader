@@ -171,7 +171,7 @@ static void set_class() {
 namespace quest_menu {
 
 void install() {
-    game::in("_ZN6mmoNPCD1Ev").before([](void* npc) {
+    game::on_destroy("mmoNPC", [](void* npc) {
         if (npc == shown_npc) {
             shown_npc = nullptr;
         }

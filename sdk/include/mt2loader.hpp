@@ -8,7 +8,9 @@
         }
 
     plugin::   the loader: init, log, fail, setting, Remembered, on_ready, share, the mod's id and folders
-    game::     the game: in, find, Function, String, field, singleton, create, enumeration, hook, patch, Address
+    game::     the game: in, find, Function, Virtual, String, field, WeakPointer, Link, Array, singleton, create, as,
+               on_destroy, enumeration, hook, patch, Address
+    game::actors::  characters' models: make, play
 
     The game was compiled by GCC, and this plugin may be compiled by another compiler (Visual Studio). Where the two
     would disagree (how a class is returned, what a std::string is, whose heap memory is on) this header does it the
@@ -1324,6 +1326,78 @@ private:
 };
 
 template<class Signature>
+class Virtual;
+
+/*
+    A game method each class answers in its own way (a virtual function), by the name of one class's version. Called
+    on an object, it runs the version of the object's own class, as the game's code does:
+
+        game::Virtual<int(const void* target)> min_level{"mmoQuestDestination::GetQuestMinLevel"};
+
+        int level = min_level(target);    // the NPC's version for an NPC, the building's for a building
+
+    The object comes first. The loader finds where the class keeps the method (its slot in the class's table of
+    virtual functions) when the plugin starts, so it follows game updates.
+*/
+template<class Result, class Object, class... Parameters>
+class Virtual<Result(Object, Parameters...)> {
+    static_assert(std::is_pointer_v<Object>, "A game::Virtual's first parameter is the object: void* or const void*");
+
+public:
+    Virtual(std::string_view name) : function(name) {
+        if (plugin::detail::api_ready()) {
+            look_up();
+        } else {
+            plugin::detail::state().pending_lookups.push_back([this] { look_up(); });
+        }
+    }
+
+    Virtual(const char* name) : Virtual(std::string_view(name)) {}
+
+    Result operator()(Object object, Parameters... arguments) const {
+        if (!slot) {
+            look_up();
+        }
+
+        void* const* table = *reinterpret_cast<void* const* const*>(object);
+
+        return plugin::detail::call<Result, Object, Parameters...>(table[*slot], object, std::forward<Parameters>(arguments)...);
+    }
+
+private:
+    // The table starts after its offset-to-top and type information; a class keeps no more virtuals than this.
+    static constexpr std::ptrdiff_t table_start = 2 * sizeof(void*);
+    static constexpr std::size_t max_slots = 1024;
+
+    void look_up() const {
+        Address method = function.address();
+        std::string name = method.name();
+        std::string owner = name.substr(0, name.find('('));
+        owner = owner.substr(0, owner.rfind("::"));
+        Address table = find(std::format("vtable for {}", owner)) + table_start;
+
+        for (std::size_t index = 0; index < max_slots; index++) {
+            std::optional<void*> entry = (table + static_cast<std::ptrdiff_t>(index * sizeof(void*))).try_read<void*>();
+
+            if (!entry) {
+                break;
+            }
+
+            if (*entry == method.get()) {
+                slot = index;
+
+                return;
+            }
+        }
+
+        plugin::fail("{} isn't one of {}'s virtual functions", name, owner);
+    }
+
+    Function<Result(Object, Parameters...)> function;
+    mutable std::optional<std::size_t> slot;
+};
+
+template<class Signature>
 class Original;
 
 // The game's function underneath a hook (and any hooks installed before it), for the hook to call.
@@ -2547,7 +2621,8 @@ Hook hook(Address function, Detour detour) {
         for (void* subscriber : game::field<game::Objects>(manager, "mmoSubscriberManager::subscriber")) { ... }
 
     add() appends one, as the game does: a list that owns its objects (a vsArrayStore) deletes it with the rest.
-    reserve() makes room first, for a list other threads may be reading.
+    reserve() makes room first, for a list other threads may be reading. resize() hides the objects past a size
+    from the game, and shows them again.
 */
 class Objects {
 public:
@@ -2559,6 +2634,14 @@ public:
     }
 
     void* const* end() const {
+        return items + size();
+    }
+
+    void** begin() {
+        return items;
+    }
+
+    void** end() {
         return items + size();
     }
 
@@ -2595,6 +2678,16 @@ public:
         }
     }
 
+    // The game sees only the first objects, up to size. The rest stay in the list's room, where resize finds them
+    // again: size never goes past what the list last held.
+    void resize(std::size_t size) {
+        if (size > static_cast<std::size_t>(capacity)) {
+            plugin::fail("A list with room for {} objects can't show {}", capacity, size);
+        }
+
+        count = static_cast<std::int32_t>(size);
+    }
+
 private:
     Objects() = default;
 
@@ -2621,16 +2714,16 @@ private:
 };
 
 /*
-    A link a game object keeps to another object that can go away (the engine's vsWeakObjectLink), seen in place:
+    A pointer a game object keeps to another object that can go away (the engine's vsWeakPointer), seen in place:
 
-        void* giver = game::field<game::Link>(quest, "mmoQuest::questGiver").get();
+        void* quest = game::field<game::WeakPointer>(card, "mmoQuestSelector::quest").get();
 
-    get() is the object, or nullptr once it's gone (or if the link was never set).
+    get() is the object, or nullptr once it's gone (or if it was never set).
 */
-class Link {
+class WeakPointer {
 public:
-    Link(const Link&) = delete;
-    Link& operator=(const Link&) = delete;
+    WeakPointer(const WeakPointer&) = delete;
+    WeakPointer& operator=(const WeakPointer&) = delete;
 
     void* get() const {
         if (proxy == nullptr || proxy->object == nullptr) {
@@ -2645,21 +2738,52 @@ public:
     }
 
 private:
-    Link() = default;
+    WeakPointer() = default;
 
-    // What the linked object shares with every link to it: the object, or nullptr once it's gone.
+    friend class Link;
+
+    // What the object shares with every pointer to it: the object, or nullptr once it's gone.
     struct Proxy {
         void* object;
-        std::int32_t links;
+        std::int32_t pointers;
     };
 
-    // As the engine lays out vsWeakObjectLink (read from vsWeakObjectLink<mmoNPC>::Resolve): its class, the id it
-    // loads by, then a vsWeakPointer: its class, the object and the proxy.
-    void* link_class = nullptr;
-    std::byte loading[0x18] = {};
+    // As the engine lays out vsWeakPointer (read from mmoToon::GetSelfAdvertisements): its class, the object, the proxy.
     void* pointer_class = nullptr;
     void* object = nullptr;
     Proxy* proxy = nullptr;
+};
+
+static_assert(sizeof(WeakPointer) == 0x18, "vsWeakPointer is 0x18 bytes in the game");
+
+/*
+    A link a game object keeps to another object that can go away (the engine's vsWeakObjectLink), seen in place:
+
+        void* giver = game::field<game::Link>(quest, "mmoQuest::questGiver").get();
+
+    get() is the object, or nullptr once it's gone (or if the link was never set).
+*/
+class Link {
+public:
+    Link(const Link&) = delete;
+    Link& operator=(const Link&) = delete;
+
+    void* get() const {
+        return pointer.get();
+    }
+
+    explicit operator bool() const {
+        return get() != nullptr;
+    }
+
+private:
+    Link() = default;
+
+    // As the engine lays out vsWeakObjectLink (read from vsWeakObjectLink<mmoNPC>::Resolve): its class, the id it
+    // loads by, then a vsWeakPointer.
+    void* link_class = nullptr;
+    std::byte loading[0x18] = {};
+    WeakPointer pointer;
 };
 
 static_assert(sizeof(Link) == 0x38, "vsWeakObjectLink is 0x38 bytes in the game");
@@ -2748,30 +2872,73 @@ inline std::vector<std::string> base_classes(const std::string& owner) {
     return names;
 }
 
-// The property object of a field, looked for in its class and the classes it's built on.
-inline game::Address find_property(std::string_view name) {
-    auto [owner, member] = split_member(name);
+// A class, then the classes it's built on, nearest first.
+inline std::vector<std::string> class_and_bases(const std::string& owner) {
+    std::vector<std::string> found;
     std::vector<std::string> to_search{ owner };
-    std::set<std::string> searched;
 
-    while (!to_search.empty() && searched.size() < 64) {
+    while (!to_search.empty() && found.size() < 64) {
         std::string current = to_search.front();
         to_search.erase(to_search.begin());
 
-        if (!searched.insert(current).second) {
+        if (std::ranges::find(found, current) != found.end()) {
             continue;
-        }
-
-        if (game::Address property = try_find_property(current, member)) {
-            return property;
         }
 
         for (std::string& base : base_classes(current)) {
             to_search.push_back(std::move(base));
         }
+
+        found.push_back(std::move(current));
     }
 
-    fail("{} has no saved field called '{}' (mt2sdk find \"{}::s_\" lists the ones it has)", owner, member, owner);
+    return found;
+}
+
+struct MappedField {
+    std::size_t offset;
+    // C++, as mt2-mappings writes it: "int", "vsArrayStore<mmoGizmoVariant>", "?" when unknown.
+    std::string type;
+};
+
+// How many bytes the game makes an object of a class with ("mmoActor"), read from its code.
+inline std::size_t class_size(std::string_view class_name) {
+    const raw::PluginApi& api = detail::api();
+
+    if (api.size < offsetof(raw::PluginApi, class_size) + sizeof(void*)) {
+        fail("Making a {} needs loader 0.13.0 or newer (this is {})", class_name, api.loader_version);
+    }
+
+    std::size_t size = api.class_size(&api, std::string(class_name).c_str());
+
+    if (size == 0) {
+        fail("The game's code doesn't show how big a {} is", class_name);
+    }
+
+    return size;
+}
+
+// A field the game doesn't name, from mt2-mappings, once the loader has seen the game's code still uses it there.
+inline std::optional<MappedField> try_mapped_field(const std::string& name) {
+    const raw::PluginApi& api = detail::api();
+
+    if (api.size < offsetof(raw::PluginApi, mapped_field) + sizeof(void*)) {
+        return std::nullopt;
+    }
+
+    std::array<char, 256> type{};
+    std::array<char, 1024> problem{};
+    std::size_t offset = 0;
+
+    if (api.mapped_field(&api, name.c_str(), &offset, type.data(), type.size(), problem.data(), problem.size())) {
+        return MappedField{ offset, type.data() };
+    }
+
+    if (problem.front() != '\0') {
+        fail("{}", problem.data());
+    }
+
+    return std::nullopt;
 }
 
 struct PropertyType {
@@ -2827,6 +2994,21 @@ inline constexpr std::array<BuiltinType, 14> builtin_types{ {
     { "float", 4, 'f' }, { "double", 8, 'f' },
 } };
 
+// A mapped field's type as the game's property objects would name it, so both are checked alike.
+inline PropertyType mapped_property_type(std::string_view type) {
+    bool is_builtin = std::ranges::any_of(builtin_types, [&](const BuiltinType& builtin) { return builtin.name == type; });
+
+    if (type.ends_with('*')) {
+        return { "vsPropertyObjectPointer", std::string(type.substr(0, type.size() - 1)) };
+    }
+
+    if (is_builtin || type == "std::string") {
+        return { "vsProperty", std::string(type) };
+    }
+
+    return { "vsPropertyObject", std::string(type) };
+}
+
 // Stands for an object kept inside another (not a pointer to it), for game::object_in.
 struct ObjectInside {};
 
@@ -2836,8 +3018,13 @@ void check_field_type(std::string_view name, const PropertyType& type) {
     bool is_text = type.value.find("basic_string") != std::string::npos || type.value == "std::string";
     bool is_list = type.kind == "vsPropertyObject" && type.value.find("Array<") != std::string::npos;
     bool is_link = type.kind == "vsPropertyObject" && type.value.starts_with("vsWeakObjectLink<");
+    bool is_weak_pointer = type.kind == "vsPropertyObject" && type.value.starts_with("vsWeakPointer<");
 
-    if constexpr (std::is_same_v<T, game::String>) {
+    if constexpr (std::is_same_v<T, game::WeakPointer>) {
+        if (!is_weak_pointer) {
+            fail("{} is of type {} in the game, not a weak pointer", name, type.value);
+        }
+    } else if constexpr (std::is_same_v<T, game::String>) {
         if (!is_text) {
             fail("{} is of type {} in the game, not text", name, type.value);
         }
@@ -2864,6 +3051,10 @@ void check_field_type(std::string_view name, const PropertyType& type) {
 
         if (is_link) {
             fail("{} is a link to an object that can go away in the game: read it as game::field<game::Link>", name);
+        }
+
+        if (is_weak_pointer) {
+            fail("{} is a pointer to an object that can go away in the game: read it as game::field<game::WeakPointer>", name);
         }
 
         // An object link holds a plain pointer once the game has resolved it (a saved id before that).
@@ -2907,6 +3098,101 @@ std::map<std::string, std::size_t, std::less<>>& field_offsets() {
     return offsets;
 }
 
+struct FoundField {
+    std::size_t offset;
+    // Empty when the type isn't known (a mapped field of type "?").
+    std::optional<PropertyType> type;
+};
+
+// "vsPool<mmoArrow>" -> "vsPool<T>", as mt2-mappings names what it knows of every vsPool.
+inline std::string generic_class(const std::string& owner) {
+    std::size_t open = owner.find('<');
+
+    return open != std::string::npos && owner.ends_with('>') ? owner.substr(0, open) + "<T>" : std::string();
+}
+
+// The fields the game names come first, in the class and the classes it's built on; then mt2-mappings'.
+inline FoundField find_member(std::string_view name) {
+    auto [owner, member] = split_member(name);
+    std::vector<std::string> classes = class_and_bases(owner);
+
+    for (const std::string& current : classes) {
+        if (game::Address property = try_find_property(current, member)) {
+            auto offset = (property + static_cast<std::ptrdiff_t>(property_offset_at)).read<std::size_t>();
+
+            return { offset, property_type(property, name) };
+        }
+    }
+
+    std::string generic = generic_class(owner);
+
+    if (!generic.empty()) {
+        classes.push_back(generic);
+    }
+
+    for (const std::string& current : classes) {
+        if (std::optional<MappedField> mapped = try_mapped_field(std::format("{}::{}", current, member))) {
+            std::optional<PropertyType> type;
+
+            if (mapped->type != "?") {
+                type = mapped_property_type(mapped->type);
+            }
+
+            return { mapped->offset, type };
+        }
+    }
+
+    fail("{} has no field called '{}', neither one the game saves nor one in mt2-mappings (mt2sdk class {} lists them)", owner, member, owner);
+}
+
+// "mmoProp::transform.m_translation": a field, then fields of the object kept inside it, each found in its type.
+inline std::vector<std::string> path_parts(std::string_view name) {
+    std::vector<std::string> parts;
+    int depth = 0;
+    std::size_t start = 0;
+
+    for (std::size_t index = 0; index < name.size(); index++) {
+        depth += name[index] == '<' ? 1 : 0;
+        depth -= name[index] == '>' ? 1 : 0;
+
+        if (depth == 0 && name[index] == '.') {
+            parts.emplace_back(name.substr(start, index - start));
+            start = index + 1;
+        }
+    }
+
+    parts.emplace_back(name.substr(start));
+
+    return parts;
+}
+
+template<class T>
+std::size_t find_field_offset(std::string_view name) {
+    std::vector<std::string> parts = path_parts(name);
+    std::string current = parts.front();
+    std::size_t offset = 0;
+
+    for (std::size_t index = 0; index + 1 < parts.size(); index++) {
+        FoundField inside = find_member(current);
+
+        if (!inside.type) {
+            fail("{} isn't known well enough to reach inside it (its type is unknown in mt2-mappings)", current);
+        }
+
+        check_field_type<ObjectInside>(current, *inside.type);
+        offset += inside.offset;
+        current = std::format("{}::{}", inside.type->value, parts[index + 1]);
+    }
+
+    FoundField found = find_member(current);
+
+    if (found.type) {
+        check_field_type<T>(name, *found.type);
+    }
+
+    return offset + found.offset;
+}
+
 template<class T>
 std::size_t field_offset(std::string_view name) {
     auto& offsets = field_offsets<T>();
@@ -2920,10 +3206,7 @@ std::size_t field_offset(std::string_view name) {
         }
     }
 
-    game::Address property = find_property(name);
-    check_field_type<T>(name, property_type(property, name));
-
-    auto offset = (property + static_cast<std::ptrdiff_t>(property_offset_at)).read<std::size_t>();
+    std::size_t offset = find_field_offset<T>(name);
     std::unique_lock writing(lookups_lock());
     offsets.emplace(std::string(name), offset);
 
@@ -2943,7 +3226,9 @@ namespace game {
         game::String& name = game::field<game::String>(toon, "mmoToon::name");
 
     The game says where each field is, so this keeps working when an update moves them. Fields of the classes a
-    class is built on are found too (name belongs to mmoProp). Text is game::String, a list of objects is
+    class is built on are found too (name belongs to mmoProp). A field the game doesn't name is found by the name
+    mt2-mappings gives it ("mmoCharacterType::colors"), once the loader has checked the game's code still uses it there.
+    A dot reaches into an object kept inside, by the fields of its type: "mmoProp::transform.m_translation". Text is game::String, a list of objects is
     game::Objects, a pointer to an object is void*, a link to an object that can go away is game::Link; a type that
     doesn't match the game's stops with the reason. mt2sdk find "mmoSubscriber::s_" lists the names. Works once the
     game runs (in a hook, or on_ready and later).
@@ -3090,6 +3375,203 @@ inline void destroy(void* object) {
 
     plugin::detail::call<void, void*>(deleting.get(), object);
 }
+
+
+/*
+    A character's model, for showing one where the game shows a plain model (a gizmo, a preview):
+
+        void* actor = game::actors::make(character_type, scene);
+        game::actors::play(actor, "sit_loop");
+
+    make() dresses it in the character's costume and colors, as the game dresses its NPCs and players
+    (mmoCharacterModelManager::MakeActor), and shows it in its first animation. nullptr for a character without a
+    costume. It's on the game's heap: hand it to the game, like a hook of mmoGizmoLibrary::MakeGizmoActor returning it.
+*/
+namespace actors {
+
+namespace detail {
+
+inline void show(void* actor, int animation) {
+    static Function<void(void* actor, int animation)> play{ "mmoActor::PlayAnimation" };
+    static Function<void(void* actor, float seconds)> update{ "mmoActor::Update" };
+    static Function<void(void* actor)> apply{ "mmoActor::Apply" };
+    static Function<void(void* actor, bool visible)> set_visible{ "mmoActor::SetVisible" };
+    static Function<void(void* actor)> build_bounds{ "mmoActor::BuildBoundingBox" };
+
+    play(actor, animation);
+    update(actor, 0.0f);
+    apply(actor);
+    set_visible(actor, true);
+    build_bounds(actor);
+}
+
+}
+
+inline void* make(void* character_type, void* scene) {
+    static Function<void*(void* type)> costume_of{ "_ZN16mmoCharacterType10GetCostumeEv" };
+    static Function<void*(std::size_t size)> allocate{ "_Znwy" };
+    static Function<void(void* actor, const String& skeleton)> start{ "_ZN8mmoActorC1ERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE" };
+    static Function<void(const void* costume, void* actor, int colors, bool, void* scene)> dress{ "mmoCostume::ApplyToActor" };
+    constexpr int first_animation = 0;
+
+    void* costume = character_type != nullptr ? costume_of(character_type) : nullptr;
+
+    if (costume == nullptr) {
+        return nullptr;
+    }
+
+    void* actor = allocate(plugin::detail::class_size("mmoActor"));
+    start(actor, field<String>(costume, "mmoCostume::actorName"));
+    dress(costume, actor, field<int>(character_type, "mmoCharacterType::colors"), false, scene);
+    detail::show(actor, first_animation);
+
+    return actor;
+}
+
+// Poses it in an animation of its skeleton ("idle", "sit_loop"). False, leaving it as it was, when there's none by
+// that name.
+inline bool play(void* actor, std::string_view animation) {
+    static Function<int(void* actor, const String& name)> animation_named{ "mmoActor::GetAnimation" };
+    constexpr int missing = -1;
+
+    int found = animation_named(actor, String(std::string(animation)));
+
+    if (found == missing) {
+        return false;
+    }
+
+    detail::show(actor, found);
+
+    return true;
+}
+
+}
+
+
+/*
+    The object as one of the classes it's built on, or nullptr when it isn't one, as the game's own code asks
+    (C++'s dynamic_cast, from the object's type information):
+
+        if (void* building = game::as(destination, "mmoBuilding")) { ... }
+*/
+inline void* as(void* object, std::string_view class_name) {
+    static Function<void*(const void* object, const void* from_type, const void* to_type, std::ptrdiff_t hint)> cast{ "__dynamic_cast" };
+    constexpr std::ptrdiff_t unknown_relation = -1;
+
+    if (object == nullptr) {
+        return nullptr;
+    }
+
+    // Before the table the object points to: how far the whole object starts before it, then the whole object's type.
+    Address table(Address(object).read<void*>());
+    auto to_top = (table - static_cast<std::ptrdiff_t>(2 * sizeof(void*))).read<std::ptrdiff_t>();
+    void* whole_type = (table - static_cast<std::ptrdiff_t>(sizeof(void*))).read<void*>();
+    Address wanted = find(std::format("typeinfo for {}", class_name));
+
+    return cast((Address(object) + to_top).get(), whole_type, wanted.get(), unknown_relation);
+}
+
+inline const void* as(const void* object, std::string_view class_name) {
+    return as(const_cast<void*>(object), class_name);
+}
+
+
+namespace detail {
+
+// "mmoQuest" -> "_ZN8mmoQuestD1Ev", a nested "mmoParty::Goal" -> "_ZN8mmoParty4GoalD1Ev".
+inline std::string destructor_symbol(std::string_view class_name, std::string_view kind) {
+    if (class_name.find('<') != std::string_view::npos) {
+        plugin::fail("game::on_destroy takes a plain class, not a template like {}", class_name);
+    }
+
+    std::string symbol = "_ZN";
+    std::size_t start = 0;
+
+    while (start <= class_name.size()) {
+        std::size_t end = class_name.find("::", start);
+        std::string_view part = class_name.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start);
+        symbol += std::format("{}{}", part.size(), part);
+        start = end == std::string_view::npos ? class_name.size() + 1 : end + 2;
+    }
+
+    return std::format("{}{}Ev", symbol, kind);
+}
+
+}
+
+/*
+    Runs before an object of the class is destroyed, by any of the game's ways of destroying one: for forgetting what
+    the plugin kept about it.
+
+        game::on_destroy("mmoNPC", [](void* npc) { markers.erase(npc); });
+
+    The game has two destructors for a class (one that frees the object's memory too). The loader watches the one
+    that does the work, or both when the compiler copied that work into each, so the lambda runs once per object.
+*/
+template<class Callback>
+void on_destroy(std::string_view class_name, Callback callback) {
+    Address complete = try_find(detail::destructor_symbol(class_name, "D1"));
+    Address deleting = try_find(detail::destructor_symbol(class_name, "D0"));
+    auto run = [callback](void* object) { callback(object); };
+
+    if (!complete && !deleting) {
+        plugin::fail("{} has no destructor in the game", class_name);
+    }
+
+    if (complete) {
+        in(complete).before(run);
+    }
+
+    if (deleting && (!complete || !deleting.try_find_reference(complete, in(deleting).size()))) {
+        in(deleting).before(run);
+    }
+}
+
+
+/*
+    A list of the plugin's own values, for a game function that takes one of the engine's arrays (vsArray<T>). Name
+    the array's type as the function's parameter has it:
+
+        std::vector<game::String> choices{ "Easy", "Hard" };
+        set_values(dropdown, game::Array<game::String>("vsArray<std::string>", choices));
+
+    The game reads it without keeping it: it borrows the values, which must outlive the call.
+*/
+template<class T>
+class Array {
+public:
+    Array(std::string_view game_type, std::span<const T> values)
+        : array_class(class_of(game_type)), items(values.data()), count(static_cast<std::int32_t>(values.size())), capacity(count) {}
+
+private:
+    // Where the table of the array's class starts, with its name found without minding spaces ("std::string >").
+    static const void* class_of(std::string_view game_type) {
+        auto without_spaces = [](std::string_view text) {
+            std::string kept;
+            std::ranges::copy_if(text, std::back_inserter(kept), [](char character) { return character != ' '; });
+
+            return kept;
+        };
+
+        constexpr std::string_view prefix = "vtable for ";
+        std::string wanted = without_spaces(game_type);
+        std::string open = std::string(game_type.substr(0, game_type.find('<') + 1));
+
+        for (const std::string& name : find_names(std::format("{}{}", prefix, open))) {
+            if (name.starts_with(prefix) && without_spaces(std::string_view(name).substr(prefix.size())) == wanted) {
+                return (find(name) + static_cast<std::ptrdiff_t>(2 * sizeof(void*))).get();
+            }
+        }
+
+        plugin::fail("The game has no array of type {}", game_type);
+    }
+
+    // As the engine lays out vsArray: its class, the items, how many, and room for how many.
+    const void* array_class;
+    const T* items;
+    std::int32_t count;
+    std::int32_t capacity;
+};
 
 
 /*

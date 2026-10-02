@@ -1,6 +1,5 @@
 #include "objective_undo.h"
 
-#include "layout.h"
 #include "objectives.h"
 #include "quest_giver.h"
 #include "steering.h"
@@ -37,7 +36,7 @@ static std::unordered_map<const void*, KeptGiver> kept;
 
 
 static std::uint64_t uid_of(const void* object) {
-    return game::field<std::uint64_t>(object, static_cast<std::size_t>(layout.object_uid));
+    return game::field<std::uint64_t>(object, "mmoObject::uid");
 }
 
 static KeptTarget keep(void* target) {
@@ -124,12 +123,9 @@ void install() {
         }
     });
 
-    // Its deleting destructor has the complete one's work inline, so both are watched.
-    for (const char* destructor : { "_ZN17mmoDoSetNPCQuestsD1Ev", "_ZN17mmoDoSetNPCQuestsD0Ev" }) {
-        game::in(destructor).before([](void* copy) {
-            kept.erase(copy);
-        });
-    }
+    game::on_destroy("mmoDoSetNPCQuests", [](void* copy) {
+        kept.erase(copy);
+    });
 
     game::in("mmoUndoManager::Clear").after([](void*) {
         kept.clear();

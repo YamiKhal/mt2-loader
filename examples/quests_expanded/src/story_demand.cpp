@@ -1,6 +1,5 @@
 #include "story_demand.h"
 
-#include "layout.h"
 #include "player_types.h"
 #include "questlines.h"
 #include "story.h"
@@ -9,7 +8,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
 
 // Past the game's own (0 to 7, and 8 it clears out).
 constexpr int story_chapter_demand = 20;
@@ -53,7 +51,7 @@ void install() {
 
     game::in("mmoReleaseDemand::_SetMatchingChangeKeys").after([](void* demand) {
         if (is_story_demand(demand)) {
-            add_key(static_cast<std::byte*>(demand) + layout.demand_change_keys, game::String(story_chapter_key));
+            add_key(game::object_in(demand, "mmoReleaseDemand::changeKeys"), game::String(story_chapter_key));
         }
     });
 

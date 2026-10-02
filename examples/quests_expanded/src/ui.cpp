@@ -1,7 +1,5 @@
 #include "ui.h"
 
-#include "layout.h"
-
 #include <mt2loader.hpp>
 
 static game::Function<void*(void* view, const game::String& id)> find_pane_by_id{ "mmoView::FindPane" };
@@ -9,38 +7,11 @@ static game::Function<void*(const game::String& id)> find_window{ "mmoWindowRegi
 static game::Function<void(void* window, bool show, bool immediately)> show_window{ "mmoWindow::Show(bool, bool)" };
 static game::Function<void(void* window, const game::LocalizedText& title)> set_title{ "mmoWindow::SetTitle" };
 static game::Function<void(void* checkbox, bool checked)> set_checkbox_value{ "mmoCheckbox::SetValue" };
-static game::Function<void(void* list, const void* initial)> make_text_list{ "vsArray<std::string >::vsArray(std::initializer_list<std::string >)" };
-static game::Function<void(void* list)> clear_text_list{ "vsArray<std::string >::Clear" };
-static game::Function<void(void* list, const game::String& text)> add_to_text_list{ "vsArray<std::string >::AddItem" };
-static game::Function<void(void* dropdown, void* choices)> set_dropdown_values{ "mmoComboBox::SetValues(vsArray<std::string >&)" };
+static game::Function<void(void* dropdown, const game::Array<game::String>& choices)> set_dropdown_values{ "mmoComboBox::SetValues(vsArray<std::string >&)" };
 static game::Function<void(void* dropdown, const game::String& choice, bool)> set_dropdown_selection{ "mmoComboBox::SetSelection" };
 // A reference to its own text, not a copy.
 static game::Function<const game::String&(const void* dropdown)> dropdown_selection{ "mmoComboBox::GetSelection" };
 
-// The engine's vsArray<std::string> (its class, the texts, how many, room for), which dropdowns copy their choices
-// from. One is kept for the whole session and refilled, so it's never destroyed.
-struct TextList {
-    alignas(8) unsigned char bytes[64] = {};
-};
-
-// std::initializer_list, as the game takes it: where the texts are and how many.
-struct InitialTexts {
-    const game::String* texts = nullptr;
-    std::size_t count = 0;
-};
-
-static void* text_list() {
-    static TextList list;
-    static bool made = false;
-
-    if (!made) {
-        InitialTexts none;
-        make_text_list(list.bytes, &none);
-        made = true;
-    }
-
-    return list.bytes;
-}
 static game::Function<void(void* pane, const game::LocalizedText& text)> set_pane_text{ "mmoTextPane::SetText" };
 static game::Function<void(void* pane, const game::LocalizedText& text, const game::Color& color)> set_pane_colored_text{ "mmoTextPane::SetTextAndColor" };
 static game::Function<void(void* tooltip, const game::LocalizedText& title, const game::LocalizedText& text, const game::String& hotkey)> set_tooltip_text{ "mmoTooltip::SetText" };
@@ -84,7 +55,7 @@ void set_window_title(void* window, std::string_view title) {
 }
 
 void set_visible(void* pane, bool visible) {
-    game::field<bool>(pane, static_cast<std::size_t>(layout.pane_visible)) = visible;
+    game::field<bool>(pane, "mmoPane::visible") = visible;
 }
 
 void set_text(void* text_pane, std::string_view text) {
@@ -105,7 +76,7 @@ void set_icon(void* button, std::string_view material) {
 
 // A button made with a tooltip in its window file has one to change.
 void set_tooltip(void* button, std::string_view title, std::string_view details) {
-    void* tooltip = game::field<void*>(button, static_cast<std::size_t>(layout.button_tooltip));
+    void* tooltip = game::field<void*>(button, "mmoButtonPane::tooltipPane");
 
     if (tooltip != nullptr) {
         set_tooltip_text(tooltip, game::LocalizedText(title), game::LocalizedText(details), game::String());
@@ -132,15 +103,11 @@ void set_checked(void* checkbox, bool checked) {
     set_checkbox_value(checkbox, checked);
 }
 
+// The dropdown copies its choices.
 void set_choices(void* dropdown, const std::vector<std::string>& choices) {
-    void* list = text_list();
-    clear_text_list(list);
+    std::vector<game::String> texts(choices.begin(), choices.end());
 
-    for (const std::string& choice : choices) {
-        add_to_text_list(list, game::String(choice));
-    }
-
-    set_dropdown_values(dropdown, list);
+    set_dropdown_values(dropdown, game::Array<game::String>("vsArray<std::string>", texts));
 }
 
 void select_choice(void* dropdown, std::string_view choice) {

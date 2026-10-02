@@ -7,8 +7,10 @@
 #include "../common/pe_image.h"
 #include "../include/mt2loader_version.h"
 #include "before_stub.h"
+#include "class_sizes.h"
 #include "code.h"
 #include "hooks.h"
+#include "mapped_fields.h"
 #include "memory.h"
 #include "mod_settings.h"
 #include "near_memory.h"
@@ -407,6 +409,29 @@ static void api_free_string(const PluginApi* api, GameString* string) {
     string->local[0] = '\0';
 }
 
+static bool api_mapped_field(const PluginApi* api, const char* name, size_t* offset, char* type, size_t type_size, char* problem, size_t problem_size) {
+    const char* mapped_type = NULL;
+    (void)api;
+
+    prepare_readable_names();
+
+    if (name == NULL || offset == NULL || !mapped_field_find(game_base, name, offset, &mapped_type, problem, problem_size)) {
+        return false;
+    }
+
+    snprintf(type, type_size, "%s", mapped_type);
+
+    return true;
+}
+
+static size_t api_class_size(const PluginApi* api, const char* class_name) {
+    (void)api;
+
+    prepare_readable_names();
+
+    return class_name != NULL ? class_size_of(loader_host->exe_module, class_name) : 0;
+}
+
 static bool api_share(const PluginApi* api, const char* name, void* pointer) {
     const char* taken_by = "";
     ShareResult result = shared_add(api->mod_id, name, pointer, &taken_by);
@@ -635,5 +660,7 @@ void plugin_api_fill(PluginApi* api, const char* mod_id, const wchar_t* mod_fold
         .saved_set_link = api_saved_set_link,
         .saved_get_link = api_saved_get_link,
         .find_names = api_find_names,
+        .mapped_field = api_mapped_field,
+        .class_size = api_class_size,
     };
 }

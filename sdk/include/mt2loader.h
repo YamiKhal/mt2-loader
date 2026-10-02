@@ -276,6 +276,18 @@ struct PluginApi {
     */
     bool (*saved_set_link)(const PluginApi* api, const void* object, const char* key, const void* target);
     void* (*saved_get_link)(const PluginApi* api, const void* object, const char* key);
+
+    // ---- Added in loader 0.13.0. ----
+
+    /*
+        A field the game doesn't name, by the name mt2-mappings gives it ("mmoCharacterType::colors"): its offset and
+        C++ type ("int", "?" when unknown). The loader checks a place the mapping names still uses the field there.
+        False otherwise, with problem saying why, or empty when mt2-mappings doesn't have the field.
+    */
+    bool (*mapped_field)(const PluginApi* api, const char* name, size_t* offset, char* type, size_t type_size, char* problem, size_t problem_size);
+
+    // How many bytes the game allocates for an object of the class ("mmoActor"), read from its code; 0 if unknown.
+    size_t (*class_size)(const PluginApi* api, const char* class_name);
 };
 
 // True when the running loader has this field of PluginApi (a newer header than the loader is fine to use).

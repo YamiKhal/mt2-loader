@@ -46,7 +46,7 @@ static void handle_command(void* window, const game::Record& command) {
 namespace quests_tab {
 
 void install() {
-    game::in("_ZN6mmoNPCD1Ev").before([](void* npc) {
+    game::on_destroy("mmoNPC", [](void* npc) {
         for (auto& [window, shown] : npc_in_window) {
             if (shown == npc) {
                 shown = nullptr;

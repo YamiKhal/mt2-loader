@@ -1,32 +1,18 @@
 #include "dungeon_quests.h"
 
-#include "layout.h"
 #include "objectives.h"
 #include "player.h"
 #include "quest.h"
 
 #include <mt2loader.hpp>
 
-#include <cstddef>
-
-static game::Function<void*(const void* object, const void* from_type, const void* to_type, std::ptrdiff_t hint)> dynamic_cast_to{ "__dynamic_cast" };
-
-
-// As the game checks what a quest's target is (mmoQuest::DefaultQuestActionForDestination).
-static void* as_building(void* destination) {
-    static const game::Address destination_type = game::find("typeinfo for mmoQuestDestination");
-    static const game::Address building_type = game::find("typeinfo for mmoBuilding");
-
-    return dynamic_cast_to(destination, destination_type.get(), building_type.get(), 0);
-}
-
 
 namespace dungeon_quests {
 
 void* dungeon_at(void* destination) {
-    void* building = destination != nullptr ? as_building(destination) : nullptr;
+    void* building = game::as(destination, "mmoBuilding");
 
-    return building != nullptr ? game::field<void*>(building, static_cast<std::size_t>(layout.building_dungeon)) : nullptr;
+    return building != nullptr ? game::field<void*>(building, "mmoBuilding::dungeon") : nullptr;
 }
 
 void* dungeon_of(const void* quest) {

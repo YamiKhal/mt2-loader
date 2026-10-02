@@ -12,12 +12,12 @@ void install() {
         questlines::changed();
     });
 
-    game::in("_ZN6mmoMapD1Ev").before([](void*) {
+    game::on_destroy("mmoMap", [](void*) {
         questlines::forget_world();
     });
 
-    for (const char* gone : { "_ZN6mmoNPCD1Ev", "_ZN8mmoQuestD1Ev" }) {
-        game::in(gone).before([](void*) {
+    for (const char* gone : { "mmoNPC", "mmoQuest" }) {
+        game::on_destroy(gone, [](void*) {
             questlines::changed();
         });
     }

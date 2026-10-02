@@ -1,6 +1,5 @@
 #include "quest_card.h"
 
-#include "layout.h"
 #include "line_titles.h"
 #include "objectives.h"
 #include "quest.h"
@@ -155,7 +154,7 @@ static void show_more(void* card, const void* quest) {
 }
 
 static void refresh(void* card) {
-    void* quest = weak_object(card, layout.card_quest);
+    void* quest = game::field<game::WeakPointer>(card, "mmoQuestSelector::quest").get();
 
     if (quest == nullptr) {
         show(card, std::nullopt);

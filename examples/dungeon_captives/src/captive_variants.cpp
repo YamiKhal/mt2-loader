@@ -1,29 +1,18 @@
 #include "captive_variants.h"
 
 #include "character_types.h"
-#include "layout.h"
 
 #include <mt2loader.hpp>
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <mutex>
-#include <span>
 #include <vector>
 
 constexpr const char* base_file = "gizmo/dungeon_captives_captive/base.variant";
 // Room for this many variants before their list moves: made up front, since saved captives load on the game's workers.
 constexpr std::size_t room_for_variants = 1024;
-
-// As the engine lays out the variants' list (vsArrayStore): its class, the variants, how many, and room for more.
-struct VariantList {
-    void* list_class;
-    void** items;
-    std::int32_t count;
-    std::int32_t capacity;
-};
 
 static game::Function<void*(const void* library, const game::String& name)> definition_named{ "mmoGizmoLibrary::GetGizmoDefinition" };
 static game::Function<void*(const void* definition, const game::String& name)> variant_named{ "mmoGizmoDefinition::GetVariant" };
@@ -31,7 +20,7 @@ static game::Function<void*(const void* definition, const game::String& name)> v
 // One variant is made once, whichever thread asks first.
 static std::mutex making_lock;
 // Variants kept out of the placing tool's list while it fills it: other characters' poses and the data variant.
-static std::int32_t hidden = 0;
+static std::size_t hidden = 0;
 
 
 static bool is_captive(const void* definition) {
@@ -42,13 +31,17 @@ static bool is_captive_name(std::string_view variant) {
     return !captive_variants::character_of(variant).empty();
 }
 
+static game::Objects& variants_of(void* definition) {
+    return game::field<game::Objects>(definition, "mmoGizmoDefinition::variants");
+}
+
 static std::string name_of(const void* variant) {
     return game::field<game::String>(variant, "mmoGizmoVariant::name").str();
 }
 
 static void* make_variant(void* definition, const std::string& name) {
     std::lock_guard making(making_lock);
-    game::Objects& variants = game::field<game::Objects>(definition, static_cast<std::size_t>(layout.definition_variants));
+    game::Objects& variants = variants_of(definition);
     auto made = std::ranges::find_if(variants, [&](const void* variant) { return name_of(variant) == name; });
 
     if (made != variants.end()) {
@@ -77,19 +70,19 @@ static void* captive_definition() {
 // The tool lists a type's variants up to their count: the ones it shows go first, the count covers only them.
 static void show_only(void* definition, const std::vector<void*>& shown) {
     std::lock_guard making(making_lock);
-    auto& list = game::field<VariantList>(definition, static_cast<std::size_t>(layout.definition_variants));
+    game::Objects& variants = variants_of(definition);
     std::vector<void*> rest;
 
-    for (void* variant : std::span(list.items, static_cast<std::size_t>(list.count))) {
+    for (void* variant : variants) {
         if (std::ranges::find(shown, variant) == shown.end()) {
             rest.push_back(variant);
         }
     }
 
-    std::ranges::copy(shown, list.items);
-    std::ranges::copy(rest, list.items + shown.size());
-    hidden = static_cast<std::int32_t>(rest.size());
-    list.count -= hidden;
+    std::ranges::copy(shown, variants.begin());
+    std::ranges::copy(rest, variants.begin() + shown.size());
+    hidden = rest.size();
+    variants.resize(shown.size());
 }
 
 
@@ -149,7 +142,8 @@ void show_all() {
     }
 
     std::lock_guard making(making_lock);
-    game::field<VariantList>(definition, static_cast<std::size_t>(layout.definition_variants)).count += hidden;
+    game::Objects& variants = variants_of(definition);
+    variants.resize(variants.size() + hidden);
     hidden = 0;
 }
 
